@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <io.legado.app.lib.prefs.PreferenceCategory
+        android:title="@string/read_aloud_lyrics_config"
+        app:allowDividerAbove="false"
+        app:allowDividerBelow="false"
+        app:iconSpaceReserved="false" />
+
+    <io.legado.app.lib.prefs.SeekBarPreference
+        android:clickable="false"
+        android:defaultValue="20"
+        android:key="readAloudLyricsTextSize"
+        android:title="@string/read_aloud_lyrics_text_size"
+        app:MaxValue="36"
+        app:MinValue="12"
+        app:iconSpaceReserved="false"
+        app:selectable="false" />
+
+    <io.legado.app.lib.prefs.ColorPreference
+        android:defaultValue="@color/read_aloud_lyrics_default_text"
+        android:key="readAloudLyricsTextColor"
+        android:summary="@string/read_aloud_lyrics_text_color_summary"
+        android:title="@string/read_aloud_lyrics_text_color"
+        app:cpv_dialogType="preset"
+        app:iconSpaceReserved="false" />
+
+    <io.legado.app.lib.prefs.ColorPreference
+        android:defaultValue="@color/read_aloud_lyrics_default_highlight"
+        android:key="readAloudLyricsHighlightColor"
+        android:summary="@string/read_aloud_lyrics_highlight_color_summary"
+        android:title="@string/read_aloud_lyrics_highlight_color"
+        app:cpv_dialogType="preset"
+        app:iconSpaceReserved="false" />
+
+    <io.legado.app.lib.prefs.SeekBarPreference
+        android:clickable="false"
+        android:defaultValue="45"
+        android:key="readAloudLyricsBgTransparency"
+        android:summary="@string/read_aloud_lyrics_bg_transparency_summary"
+        android:title="@string/read_aloud_lyrics_bg_transparency"
+        app:MaxValue="100"
+        app:MinValue="0"
+        app:iconSpaceReserved="false"
+        app:selectable="false" />
+
+    <io.legado.app.lib.prefs.SwitchPreference
+        android:defaultValue="true"
+        android:key="readAloudLyricsShowContext"
+        android:summary="@string/read_aloud_lyrics_show_context_summary"
+        android:title="@string/read_aloud_lyrics_show_context"
+        app:iconSpaceReserved="false" />
+
+    <io.legado.app.lib.prefs.SwitchPreference
+        android:defaultValue="true"
+        android:key="readAloudLyricsShowControls"
+        android:summary="@string/read_aloud_lyrics_show_controls_summary"
+        android:title="@string/read_aloud_lyrics_show_controls"
+        app:iconSpaceReserved="false" />
+
+    <io.legado.app.lib.prefs.SwitchPreference
+        android:defaultValue="true"
+        android:key="readAloudLyricsOnlyBackground"
+        android:summary="@string/read_aloud_lyrics_only_background_summary"
+        android:title="@string/read_aloud_lyrics_only_background"
+        app:iconSpaceReserved="false" />
+
+    <io.legado.app.lib.prefs.Preference
+        android:key="readAloudLyricsResetPosition"
+        android:summary="@string/read_aloud_lyrics_reset_position_summary"
+        android:title="@string/read_aloud_lyrics_reset_position"
+        app:iconSpaceReserved="false" />
+
+</androidx.preference.PreferenceScreen>

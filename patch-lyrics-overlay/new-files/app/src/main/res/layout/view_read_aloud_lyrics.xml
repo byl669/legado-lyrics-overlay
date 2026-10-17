@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+  朗读「桌面歌词」悬浮窗布局。
+  注意: 该布局由 Service 通过 WindowManager 挂载, 使用的 Context 为 Application,
+  因此这里不要引用自定义主题属性(?attr/xxx), 颜色与背景一律在代码中设置。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/lyrics_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingTop="12dp"
+    android:paddingBottom="10dp">
+
+    <!-- 上一句(淡) -->
+    <TextView
+        android:id="@+id/tv_lyrics_prev"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:maxLines="1"
+        android:textSize="13sp" />
+
+    <!-- 当前句(高亮, 支持逐字着色) -->
+    <TextView
+        android:id="@+id/tv_lyrics_current"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:lineSpacingExtra="3dp"
+        android:maxLines="3"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+    <!-- 下一句(淡) -->
+    <TextView
+        android:id="@+id/tv_lyrics_next"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:maxLines="1"
+        android:textSize="13sp" />
+
+    <!-- 控制按钮: 上一句 / 播放暂停 / 下一句 / 关闭 -->
+    <LinearLayout
+        android:id="@+id/ll_lyrics_controls"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="2dp"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/iv_lyrics_prev"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/read_aloud_lyrics_prev"
+            android:padding="9dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_skip_previous" />
+
+        <ImageButton
+            android:id="@+id/iv_lyrics_play"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/read_aloud_lyrics_play"
+            android:padding="9dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_pause_24dp" />
+
+        <ImageButton
+            android:id="@+id/iv_lyrics_next"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/read_aloud_lyrics_next"
+            android:padding="9dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_skip_next" />
+
+        <ImageButton
+            android:id="@+id/iv_lyrics_close"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/read_aloud_lyrics_close"
+            android:padding="9dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_baseline_close" />
+    </LinearLayout>
+</LinearLayout>

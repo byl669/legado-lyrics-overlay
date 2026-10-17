@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--朗读桌面歌词: 默认配色-->
+    <color name="read_aloud_lyrics_default_text">#FFFFFFFF</color>
+    <!-- 默认与正文同色: 逐字推进只体现为明暗变化, 不出现突兀的换色 -->
+    <color name="read_aloud_lyrics_default_highlight">#FFFFFFFF</color>
+</resources>

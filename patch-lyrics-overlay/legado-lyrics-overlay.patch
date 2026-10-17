@@ -1,0 +1,1531 @@
+diff --git a/app/build.gradle b/app/build.gradle
+index c7e643e..37ad6f1 100644
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -22,7 +22,10 @@ static def releaseTime() {
+ 
+ def name = "legado"
+ def version = "3." + releaseTime()
+-def versionCodeValue = 30000
++// 定制版说明: 仓库为浅克隆, 拿不到基线 commit 因此 rev-list 计算会失败
++// 官方原版发布包 versionCode=37456, 这里给定更高值保证升级方向正确;
++// 也可在命令行用 -PversionCode=xxxxx 覆盖
++def versionCodeValue = project.findProperty("versionCode")?.toString()?.toInteger() ?: 38200
+ // Preserve the published code at this point, then ignore GitHub wrapper merge commits.
+ def versionCodeBaseCommit = '9639f027fbc8cfdf57ce136a9e0c98829a235aef'
+ def versionCodeAtBase = 37540
+@@ -64,7 +67,9 @@ android {
+     }
+     defaultConfig {
+         applicationId "com.legado.app"
+-        minSdk 23
++        // 本项目定制版仅面向 Android 8.0(API 26) 及以上设备
++        // 原版 minSdk 23 与 htmlunit-core-js 依赖冲突(D8: MethodHandle 需 min-api 26)
++        minSdk 26
+         targetSdk 36
+         versionCode = versionCodeValue
+         versionName version
+@@ -112,9 +117,13 @@ android {
+             if (project.hasProperty("RELEASE_STORE_FILE")) {
+                 signingConfig = signingConfigs.myConfig
+             }
+-            applicationIdSuffix '.release'
++            // 定制版使用独立包名, 与官方原版(com.legado.app.release)共存, 互不覆盖
++            applicationIdSuffix '.custom'
+             if (getApplicationIdSuffix() == '.releaseA') {
+                 manifestPlaceholders.put("app_name", "@string/app_name_a")
++            } else if (getApplicationIdSuffix() == '.custom') {
++                // 与原版同装一台设备时便于区分
++                manifestPlaceholders.put("app_name", "@string/app_name_custom")
+             } else {
+                 manifestPlaceholders.put("app_name", "@string/app_name")
+             }
+diff --git a/app/google-services.json b/app/google-services.json
+index 526489d..5dceab5 100644
+--- a/app/google-services.json
++++ b/app/google-services.json
+@@ -80,6 +80,43 @@
+         }
+       }
+     },
++    {
++      "client_info": {
++        "mobilesdk_app_id": "1:620835636521:android:0839a6ecc9c33bd2cda338",
++        "android_client_info": {
++          "package_name": "com.legado.app.custom"
++        }
++      },
++      "oauth_client": [
++        {
++          "client_id": "620835636521-ndsrgnnhfquo2uk7mdm0d3kqoflq5ulp.apps.googleusercontent.com",
++          "client_type": 1,
++          "android_info": {
++            "package_name": "com.legado.app.custom",
++            "certificate_hash": "acc4d404a12261f8fbc70954f715fcd4a211e3e9"
++          }
++        },
++        {
++          "client_id": "620835636521-2m4f4ft69l27l3njmbtl5hd742phurdf.apps.googleusercontent.com",
++          "client_type": 3
++        }
++      ],
++      "api_key": [
++        {
++          "current_key": "AIzaSyAXWWvSgBYeQv5VHIzq_I2zrB6IVxIPPv4"
++        }
++      ],
++      "services": {
++        "appinvite_service": {
++          "other_platform_oauth_client": [
++            {
++              "client_id": "620835636521-2m4f4ft69l27l3njmbtl5hd742phurdf.apps.googleusercontent.com",
++              "client_type": 3
++            }
++          ]
++        }
++      }
++    },
+     {
+       "client_info": {
+         "mobilesdk_app_id": "1:620835636521:android:89ebce5eda02d24ccda338",
+diff --git a/app/src/main/java/io/legado/app/App.kt b/app/src/main/java/io/legado/app/App.kt
+index 71b8373..8de3283 100644
+--- a/app/src/main/java/io/legado/app/App.kt
++++ b/app/src/main/java/io/legado/app/App.kt
+@@ -59,7 +59,10 @@ import io.legado.app.utils.ChineseUtils
+ import io.legado.app.utils.LogUtils
+ import io.legado.app.utils.defaultSharedPreferences
+ import io.legado.app.utils.getPrefBoolean
++import io.legado.app.utils.getPrefInt
+ import io.legado.app.utils.isDebuggable
++import io.legado.app.utils.putPrefBoolean
++import io.legado.app.utils.putPrefInt
+ import kotlinx.coroutines.launch
+ import org.chromium.base.ThreadUtils
+ import splitties.init.appCtx
+@@ -72,6 +75,23 @@ class App : Application() {
+ 
+     private lateinit var oldConfig: Configuration
+ 
++    /**
++     * 一次性迁移: 朗读桌面歌词的「已读进度颜色」。
++     *
++     * v1 的默认值是青色 #00E5FF, 而 ColorPreference 在打开设置页时就会把默认值落盘,
++     * 因此仅修改默认值无法影响老用户。这里在启动时把「遗留的青默认值」重置为与歌词同色,
++     * 让逐字推进只体现为明暗变化; 用户主动选过的其它颜色保持不动。
++     */
++    private fun migrateReadAloudLyricsColor() {
++        if (getPrefBoolean(PreferKey.readAloudLyricsColorMigrated, false)) return
++        val legacy = 0xFF00E5FF.toInt()
++        val white = 0xFFFFFFFF.toInt()
++        if (getPrefInt(PreferKey.readAloudLyricsHighlightColor, white) == legacy) {
++            putPrefInt(PreferKey.readAloudLyricsHighlightColor, white)
++        }
++        putPrefBoolean(PreferKey.readAloudLyricsColorMigrated, true)
++    }
++
+     override fun onCreate() {
+         super.onCreate()
+         CrashHandler(this)
+@@ -87,6 +107,7 @@ class App : Application() {
+         applyDayNightInit(this)
+         registerActivityLifecycleCallbacks(LifecycleHelp)
+         defaultSharedPreferences.registerOnSharedPreferenceChangeListener(AppConfig)
++        migrateReadAloudLyricsColor()
+         initRhino()
+         Coroutine.async {
+             LogUtils.init(this@App)
+diff --git a/app/src/main/java/io/legado/app/constant/EventBus.kt b/app/src/main/java/io/legado/app/constant/EventBus.kt
+index cc00523..10ce417 100644
+--- a/app/src/main/java/io/legado/app/constant/EventBus.kt
++++ b/app/src/main/java/io/legado/app/constant/EventBus.kt
+@@ -38,6 +38,10 @@ object EventBus {
+     const val UPDATE_READ_ACTION_BAR = "updateReadActionBar"
+     const val UP_SEEK_BAR = "upSeekBar"
+     const val READ_ALOUD_PLAY = "readAloudPlay"
++    // 朗读桌面歌词: 配置变更(字号/颜色/开关等)后通知悬浮窗刷新
++    const val READ_ALOUD_LYRICS_CONFIG = "readAloudLyricsConfig"
++    // 朗读桌面歌词: 当前句/进度变化
++    const val READ_ALOUD_LYRICS_TEXT = "readAloudLyricsText"
+     const val EXPORT_BOOK = "exportBook"
+     const val UP_MANGA_CONFIG = "upMangaConfig"
+     const val PLAY_MODE_CHANGED = "playModeChanged"
+diff --git a/app/src/main/java/io/legado/app/constant/PreferKey.kt b/app/src/main/java/io/legado/app/constant/PreferKey.kt
+index bf4eaa0..33c0ab4 100644
+--- a/app/src/main/java/io/legado/app/constant/PreferKey.kt
++++ b/app/src/main/java/io/legado/app/constant/PreferKey.kt
+@@ -214,6 +214,19 @@ object PreferKey {
+     const val webServiceWakeLock = "webServiceWakeLock"
+     const val audioPlayWakeLock = "audioPlayWakeLock"
+     const val readAloudWakeLock = "readAloudWakeLock"
++    // 朗读桌面歌词(系统级悬浮窗)
++    const val readAloudLyrics = "readAloudLyrics"
++    const val readAloudLyricsTextSize = "readAloudLyricsTextSize"
++    const val readAloudLyricsTextColor = "readAloudLyricsTextColor"
++    const val readAloudLyricsHighlightColor = "readAloudLyricsHighlightColor"
++    const val readAloudLyricsBgTransparency = "readAloudLyricsBgTransparency"
++    const val readAloudLyricsShowContext = "readAloudLyricsShowContext"
++    const val readAloudLyricsShowControls = "readAloudLyricsShowControls"
++    const val readAloudLyricsOnlyBackground = "readAloudLyricsOnlyBackground"
++    const val readAloudLyricsY = "readAloudLyricsY"
++
++    /** v1 遗留青色默认值是否已迁移为「与歌词同色」 */
++    const val readAloudLyricsColorMigrated = "readAloudLyricsColorMigrated"
+     const val showLastUpdateTime = "showLastUpdateTime"
+     const val showSearchReadRecord = "showSearchReadRecord"
+     const val showWaitUpCount = "showWaitUpCount"
+diff --git a/app/src/main/java/io/legado/app/service/BaseReadAloudService.kt b/app/src/main/java/io/legado/app/service/BaseReadAloudService.kt
+index 25b279e..0c99b29 100644
+--- a/app/src/main/java/io/legado/app/service/BaseReadAloudService.kt
++++ b/app/src/main/java/io/legado/app/service/BaseReadAloudService.kt
+@@ -13,7 +13,10 @@ import android.graphics.BitmapFactory
+ import android.media.AudioManager
+ import android.net.wifi.WifiManager
+ import android.os.Bundle
++import android.os.Handler
++import android.os.Looper
+ import android.os.PowerManager
++import android.os.SystemClock
+ import android.support.v4.media.MediaMetadataCompat
+ import android.support.v4.media.session.MediaSessionCompat
+ import android.support.v4.media.session.PlaybackStateCompat
+@@ -77,6 +80,9 @@ import splitties.systemservices.powerManager
+ import splitties.systemservices.telephonyManager
+ import splitties.systemservices.wifiManager
+ 
++/** 朗读桌面歌词逐字高亮的最小刷新间隔(ms), 防止 TTS 逐字回调把主线程打满 */
++private const val LYRICS_THROTTLE_MS = 40L
++
+ internal fun shouldRewindReadAloudToSentenceStart(
+     rewindToSentenceStart: Boolean,
+     toLast: Boolean
+@@ -219,6 +225,17 @@ abstract class BaseReadAloudService : BaseService(),
+     var readAloudByPage = false
+         private set
+ 
++    /** 朗读桌面歌词悬浮窗, 首次朗读时创建, 服务销毁时释放 */
++    private var lyricsWindow: ReadAloudLyricsWindow? = null
++
++    /** 已投递给歌词窗的句子下标, 用于判断是否换句 */
++    private var lyricsSentenceIndex = -1
++
++    /** 逐字高亮的节流时间戳(ms) */
++    private var lyricsProgressStamp = 0L
++
++    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
++
+     private data class PreparedReadAloud(
+         val textChapter: TextChapter,
+         val pageIndex: Int,
+@@ -290,11 +307,35 @@ abstract class BaseReadAloudService : BaseService(),
+                 }
+             }
+         }
++        // 朗读桌面歌词: 开关 / 外观配置发生变化
++        observeEvent<Boolean>(EventBus.READ_ALOUD_LYRICS_CONFIG) {
++            onLyricsConfigChanged()
++        }
++    }
++
++    private fun onLyricsConfigChanged() {
++        val window = lyricsWindow
++        if (window == null) {
++            if (isRun && getPrefBoolean(PreferKey.readAloudLyrics)) {
++                ensureLyricsWindow()
++                lyricsWindow?.attach()
++                publishLyrics(force = true)
++            }
++            return
++        }
++        window.refreshAppearance()
++        if (window.isEnabled()) {
++            window.attach()
++            publishLyrics(force = true)
++        } else {
++            window.hide()
++        }
+     }
+ 
+     override fun onDestroy() {
+         readAloudGeneration.incrementAndGet()
+         readAloudJob?.cancel()
++        releaseLyricsWindow()
+         super.onDestroy()
+         restoreReadAloudFollow()
+         updateReadAloudChapterIndex(-1)
+@@ -406,6 +447,11 @@ abstract class BaseReadAloudService : BaseService(),
+                 BaseReadAloudService.readAloudChapterStart = prepared.readAloudChapterStart
+                 this@BaseReadAloudService.paragraphStartPos = prepared.paragraphStartPos
+                 if (prepared.consumedToLast) this@BaseReadAloudService.toLast = false
++                // 朗读位置就绪后即可把当前句推给桌面歌词窗
++                ensureLyricsWindow()
++                // 先同步播放态再推句子: 暂停中(或本次不自动播放)窗口应保持隐藏, 避免闪一下
++                lyricsWindow?.updatePlayState(play)
++                publishLyrics(force = true)
+                 if (play) play() else pageChanged = true
+             }
+         }.onError(Main) {
+@@ -428,6 +474,10 @@ abstract class BaseReadAloudService : BaseService(),
+         upReadAloudNotification()
+         upMediaSessionPlaybackState(PlaybackStateCompat.STATE_PLAYING)
+         postEvent(EventBus.ALOUD_STATE, Status.PLAY)
++        lyricsWindow?.let {
++            it.updatePlayState(true)
++            it.attach()
++        }
+     }
+ 
+     abstract fun playStop()
+@@ -445,6 +495,7 @@ abstract class BaseReadAloudService : BaseService(),
+         upReadAloudNotification()
+         upMediaSessionPlaybackState(PlaybackStateCompat.STATE_PAUSED)
+         postEvent(EventBus.ALOUD_STATE, Status.PAUSE)
++        lyricsWindow?.updatePlayState(false)
+         ReadBook.uploadProgress()
+         doDs()
+     }
+@@ -462,6 +513,10 @@ abstract class BaseReadAloudService : BaseService(),
+         upReadAloudNotification()
+         upMediaSessionPlaybackState(PlaybackStateCompat.STATE_PLAYING)
+         postEvent(EventBus.ALOUD_STATE, Status.PLAY)
++        lyricsWindow?.let {
++            it.updatePlayState(true)
++            it.attach()
++        }
+     }
+ 
+     abstract fun upSpeechRate(reset: Boolean = false)
+@@ -469,6 +524,59 @@ abstract class BaseReadAloudService : BaseService(),
+     fun upTtsProgress(progress: Int) {
+         readAloudChapterStart = progress
+         postEvent(EventBus.TTS_PROGRESS, progress)
++        publishLyrics()
++    }
++
++    // ------------------------------------------------------------ 朗读桌面歌词
++
++    /** 朗读桌面歌词: 上一句(供悬浮窗按钮调用) */
++    fun prevParagraph() = prevP()
++
++    /** 朗读桌面歌词: 下一句(供悬浮窗按钮调用) */
++    fun nextParagraph() = nextP()
++
++    private fun ensureLyricsWindow() {
++        if (lyricsWindow == null) {
++            lyricsWindow = ReadAloudLyricsWindow(this)
++        }
++    }
++
++    /**
++     * 把当前朗读的句子与句内进度推送到桌面歌词悬浮窗。
++     * 逐字回调频率高, 这里做节流, 避免频繁重排 TextView。
++     */
++    private fun publishLyrics(force: Boolean = false) {
++        val window = lyricsWindow ?: return
++        if (!window.isEnabled()) return
++        val now = SystemClock.elapsedRealtime()
++        if (!force && now - lyricsProgressStamp < LYRICS_THROTTLE_MS) return
++        lyricsProgressStamp = now
++        if (Looper.myLooper() == Looper.getMainLooper()) {
++            doPublishLyrics(window, force)
++        } else {
++            mainHandler.post { doPublishLyrics(window, force) }
++        }
++    }
++
++    private fun doPublishLyrics(window: ReadAloudLyricsWindow, force: Boolean) {
++        val index = nowSpeak
++        if (force || index != lyricsSentenceIndex) {
++            lyricsSentenceIndex = index
++            window.updateSentence(
++                index,
++                contentList.getOrNull(index - 1),
++                contentList.getOrNull(index),
++                contentList.getOrNull(index + 1)
++            )
++        }
++        // readAloudNumber 在朗读当前句期间保持不变, 因此差值即句内已读字符数
++        window.updateCharProgress(readAloudChapterStart - readAloudNumber)
++    }
++
++    private fun releaseLyricsWindow() {
++        lyricsWindow?.release()
++        lyricsWindow = null
++        lyricsSentenceIndex = -1
+     }
+ 
+     private fun prevP() {
+diff --git a/app/src/main/java/io/legado/app/service/ReadAloudLyricsWindow.kt b/app/src/main/java/io/legado/app/service/ReadAloudLyricsWindow.kt
+new file mode 100644
+index 0000000..bdea9c2
+--- /dev/null
++++ b/app/src/main/java/io/legado/app/service/ReadAloudLyricsWindow.kt
+@@ -0,0 +1,681 @@
++package io.legado.app.service
++
++import android.annotation.SuppressLint
++import android.content.BroadcastReceiver
++import android.content.Context
++import android.content.Intent
++import android.content.IntentFilter
++import android.graphics.Color
++import android.graphics.PixelFormat
++import android.graphics.drawable.GradientDrawable
++import android.os.Build
++import android.os.Handler
++import android.os.Looper
++import android.os.PowerManager
++import android.os.SystemClock
++import android.provider.Settings
++import android.text.SpannableString
++import android.text.Spanned
++import android.text.style.ForegroundColorSpan
++import android.util.TypedValue
++import android.view.Gravity
++import android.view.LayoutInflater
++import android.view.MotionEvent
++import android.view.View
++import android.view.ViewConfiguration
++import android.view.WindowManager
++import android.widget.ImageButton
++import android.widget.LinearLayout
++import android.widget.TextView
++import io.legado.app.BuildConfig
++import io.legado.app.R
++import io.legado.app.constant.PreferKey
++import io.legado.app.help.LifecycleHelp
++import io.legado.app.utils.LogUtils
++import io.legado.app.utils.getPrefBoolean
++import io.legado.app.utils.getPrefInt
++import io.legado.app.utils.putPrefBoolean
++import io.legado.app.utils.putPrefInt
++import io.legado.app.utils.toastOnUi
++import kotlin.math.abs
++
++/**
++ * 朗读「桌面歌词」悬浮窗。
++ *
++ * 把朗读服务当前的句子投影到系统窗口层(TYPE_APPLICATION_OVERLAY)，
++ * 效果对齐音乐类 App 的桌面歌词：当前句高亮 + 逐字着色 + 可拖动 + 控制按钮。
++ *
++ * 透明度约定：用户设置的「背景透明度」只作用于窗口背景，**前景文字与图标一律完全不透明**，
++ * 保证任何壁纸/任意透明度下文字都清晰可读。
++ *
++ * 所有对外方法都必须在主线程调用。
++ */
++class ReadAloudLyricsWindow(private val service: BaseReadAloudService) {
++
++    companion object {
++        private const val TAG = "ReadAloudLyricsWindow"
++
++        /** 判定为拖动而非点击的位移阈值(px) */
++        private const val DRAG_SLOP_PX = 14
++
++        /** 长按判定时长(ms) */
++        private const val LONG_PRESS_MS = 550L
++
++        /** 双击判定的最大间隔(ms), 取系统标准值, 与用户日常手感一致 */
++        private val DOUBLE_TAP_TIMEOUT_MS: Long = ViewConfiguration.getDoubleTapTimeout().toLong()
++
++        /** 双击判定的最大偏移(px), 两次点击位置相差过大不算双击 */
++        private const val DOUBLE_TAP_SLOP_PX = 80
++
++        /** 应用前后台状态轮询间隔(ms) */
++        private const val FOREGROUND_POLL_MS = 1500L
++
++        private const val DEFAULT_TEXT_SIZE_SP = 20
++        private const val DEFAULT_BG_TRANSPARENCY = 45
++        private const val CONTEXT_TEXT_SIZE_RATIO = 0.62f
++        private const val DEFAULT_Y_RATIO = 0.08f
++
++        /** 未设置过位置时的标记 */
++        private const val POSITION_UNSET = -1
++
++        private val DEFAULT_TEXT_COLOR = Color.WHITE
++
++        /**
++         * 默认高亮色与正文同色。
++         * 这样默认观感是「同色系由暗到亮」的推进, 不会出现一段文字突然变蓝的突兀感;
++         * 想要彩色扫读的用户可在「歌词外观」里另行指定高亮色。
++         */
++        private val DEFAULT_HIGHLIGHT_COLOR = Color.WHITE
++    }
++
++    private val context: Context = service.applicationContext
++    private val mainHandler = Handler(Looper.getMainLooper())
++    private val windowManager: WindowManager =
++        context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
++    private val powerManager: PowerManager =
++        context.getSystemService(Context.POWER_SERVICE) as PowerManager
++
++    /** 是否已注册熄屏/亮屏监听 */
++    private var receiverRegistered = false
++
++    /** 上一次的可见性判定结果, 仅在变化时打日志 */
++    private var lastCanShow: Boolean? = null
++
++    private var rootView: View? = null
++    private var layoutParams: WindowManager.LayoutParams? = null
++
++    private var tvPrev: TextView? = null
++    private var tvCurrent: TextView? = null
++    private var tvNext: TextView? = null
++    private var llControls: LinearLayout? = null
++    private var ivPrev: ImageButton? = null
++    private var ivPlay: ImageButton? = null
++    private var ivNext: ImageButton? = null
++    private var ivClose: ImageButton? = null
++
++    var isShowing: Boolean = false
++        private set
++
++    /** 当前句原文，逐字高亮时复用，避免每次重新切分 */
++    private var currentSentence: String = ""
++    private var currentSentenceIndex: Int = -1
++
++    /** 前后句文本缓存: 窗口尚未创建时先存着, 视图创建后一次性补齐 */
++    private var pendingPrev: String? = null
++    private var pendingNext: String? = null
++
++    /** 最近一次句内已读字符数, 供改配色后重绘复用 */
++    private var lastCharProgress = 0
++
++    /** 长按临时隐藏按钮 */
++    private var controlsTempHidden = false
++
++    private var dragging = false
++    private var downRawY = 0f
++    private var dragStartY = 0
++    private val longPressRunnable = Runnable { onLongPress() }
++
++    /**
++     * 朗读是否处于暂停态。
++     * 暂停时整个窗口隐藏(由双击悬浮窗触发), 恢复播放后再自动显示。
++     * 暂停可能来自音频焦点/来电等非主线程回调, 故用 @Volatile 保证可见性。
++     * 初始值取窗口创建瞬间的真实状态: 暂停中新建的窗口不该直接弹出来。
++     */
++    @Volatile
++    private var paused: Boolean = !BaseReadAloudService.isPlay()
++
++    /** 上一次抬手的时间与位置, 用于双击判定 */
++    private var lastTapUptime = 0L
++    private var lastTapRawX = 0f
++    private var lastTapRawY = 0f
++
++    /** 本次按下是否已触发长按; 长按过的手势不再计入双击 */
++    private var longPressFired = false
++
++    private val foregroundPoller = object : Runnable {
++        override fun run() {
++            syncVisibility()
++            mainHandler.postDelayed(this, FOREGROUND_POLL_MS)
++        }
++    }
++
++    /**
++     * 熄屏后系统不再合成悬浮窗, 继续轮询与逐字刷新纯属浪费。
++     * 这里在熄屏时停掉轮询并隐藏窗口, 亮屏时再恢复。
++     */
++    private val screenReceiver = object : BroadcastReceiver() {
++        override fun onReceive(receiverContext: Context?, intent: Intent?) {
++            when (intent?.action) {
++                Intent.ACTION_SCREEN_OFF -> {
++                    log("ACTION_SCREEN_OFF: 停止轮询并隐藏窗口")
++                    mainHandler.removeCallbacks(foregroundPoller)
++                    hide()
++                }
++
++                Intent.ACTION_SCREEN_ON -> {
++                    log("ACTION_SCREEN_ON: 恢复轮询")
++                    attach()
++                }
++            }
++        }
++    }
++
++    private fun isScreenOn(): Boolean = powerManager.isInteractive
++
++    private fun registerScreenReceiver() {
++        if (receiverRegistered) return
++        runCatching {
++            val filter = IntentFilter().apply {
++                addAction(Intent.ACTION_SCREEN_ON)
++                addAction(Intent.ACTION_SCREEN_OFF)
++            }
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
++                context.registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
++            } else {
++                context.registerReceiver(screenReceiver, filter)
++            }
++            receiverRegistered = true
++        }.onFailure { log("注册熄屏监听失败: ${it.message}") }
++    }
++
++    private fun unregisterScreenReceiver() {
++        if (!receiverRegistered) return
++        runCatching { context.unregisterReceiver(screenReceiver) }
++        receiverRegistered = false
++    }
++
++    // ------------------------------------------------------------------ 开关判定
++
++    /** 用户是否开启了桌面歌词总开关 */
++    fun isEnabled(): Boolean =
++        context.getPrefBoolean(PreferKey.readAloudLyrics, false)
++
++    /** 是否已获得悬浮窗权限 */
++    fun hasPermission(): Boolean =
++        Settings.canDrawOverlays(context)
++
++    /**
++     * 是否可以真正显示。
++     * 只在结果发生变化时打一条日志, 避免前后台轮询把日志刷满。
++     */
++    private fun canShow(): Boolean {
++        val enabled = isEnabled()
++        val permitted = enabled && hasPermission()
++        val playing = permitted && !paused
++        val screenOn = playing && isScreenOn()
++        var reason: String? = null
++        var result: Boolean
++        when {
++            !enabled -> {
++                reason = "开关未开启"
++                result = false
++            }
++
++            !permitted -> {
++                reason = "无悬浮窗权限"
++                result = false
++            }
++
++            !playing -> {
++                // 暂停时不显示: 此时没有任何逐字进度, 留在屏幕上只会挡住别的应用
++                reason = "朗读已暂停"
++                result = false
++            }
++
++            !screenOn -> {
++                // 熄屏时既不显示也不刷新, 省掉所有无用的重排与 surface
++                reason = "屏幕已熄灭"
++                result = false
++            }
++
++            else -> {
++                val onlyBackground =
++                    context.getPrefBoolean(PreferKey.readAloudLyricsOnlyBackground, true)
++                val top = if (onlyBackground) LifecycleHelp.getTopActivity() else null
++                if (top != null) {
++                    reason = "应用在前台 ${top::class.java.simpleName}"
++                    result = false
++                } else {
++                    result = true
++                }
++            }
++        }
++        if (lastCanShow != result) {
++            lastCanShow = result
++            log(if (result) "canShow -> 显示" else "canShow -> 隐藏 ($reason)")
++        }
++        return result
++    }
++
++    // ---------------------------------------------------------------- 生命周期
++
++    /** 朗读开始时调用, 启动前后台轮询并尝试显示 */
++    fun attach() {
++        registerScreenReceiver()
++        mainHandler.removeCallbacks(foregroundPoller)
++        mainHandler.post(foregroundPoller)
++        log("attach: 启动前后台轮询")
++        syncVisibility()
++    }
++
++    /** 朗读结束时调用, 彻底释放窗口 */
++    fun release() {
++        unregisterScreenReceiver()
++        mainHandler.removeCallbacks(foregroundPoller)
++        mainHandler.removeCallbacks(longPressRunnable)
++        hide()
++        rootView = null
++        layoutParams = null
++        tvPrev = null
++        tvCurrent = null
++        tvNext = null
++        llControls = null
++        ivPrev = null
++        ivPlay = null
++        ivNext = null
++        ivClose = null
++        currentSentence = ""
++        currentSentenceIndex = -1
++        pendingPrev = null
++        pendingNext = null
++        lastCharProgress = 0
++        lastCanShow = null
++        paused = false
++        lastTapUptime = 0L
++        longPressFired = false
++    }
++
++    /** 依据开关与前后台状态同步窗口可见性 */
++    fun syncVisibility() {
++        if (canShow()) show() else hide()
++    }
++
++    /** 重新读取外观配置并刷新 */
++    fun refreshAppearance() {
++        val view = rootView ?: return
++        view.setBackground(createBackground())
++        applyTextAppearance()
++        applyControlsVisibility()
++        applyPositionPref()
++    }
++
++    // ------------------------------------------------------------------ 显示/隐藏
++
++    fun show() {
++        if (isShowing) return
++        if (!hasPermission()) return
++        runCatching {
++            val view = rootView ?: createView().also { rootView = it }
++            windowManager.addView(view, layoutParams)
++            isShowing = true
++            refreshAppearance()
++            log("show: 悬浮窗已添加")
++        }.onFailure {
++            // 权限被系统回收或窗口服务异常, 静默失败, 下次轮询会再次尝试
++            log("show: 添加失败 -> ${it::class.java.simpleName}: ${it.message}")
++            isShowing = false
++        }
++    }
++
++    fun hide() {
++        if (!isShowing) return
++        val view = rootView ?: return
++        runCatching {
++            windowManager.removeViewImmediate(view)
++        }
++        isShowing = false
++    }
++
++    // ------------------------------------------------------------------ 内容更新
++
++    /**
++     * 句子切换。
++     * @param index 当前句在朗读列表中的下标, 用于判断是否真的换句
++     */
++    fun updateSentence(index: Int, prev: String?, current: String?, next: String?) {
++        if (index == currentSentenceIndex && currentSentence == current.orEmpty()) {
++            return
++        }
++        currentSentenceIndex = index
++        currentSentence = current.orEmpty()
++        pendingPrev = prev
++        pendingNext = next
++        lastCharProgress = 0
++        applySentenceTexts()
++        // 换句时顺带校正一次可见性(切后台后最多等一句)
++        syncVisibility()
++    }
++
++    /**
++     * 逐字进度更新(卡拉OK效果)。
++     * @param readChars 当前句内已朗读的字符数, <=0 表示未开始
++     */
++    fun updateCharProgress(readChars: Int) {
++        lastCharProgress = readChars.coerceAtLeast(0)
++        if (!isShowing) return
++        applyCurrentSentence(lastCharProgress)
++    }
++
++    /**
++     * 同步播放/暂停状态, 并据此收敛窗口可见性。
++     *
++     * 暂停 → 隐藏悬浮窗; 恢复 → 重新显示。
++     * 暂停可能由音频焦点丢失、来电等非主线程路径触发, 因此 UI 部分统一切回主线程。
++     */
++    fun updatePlayState(isPlaying: Boolean) {
++        paused = !isPlaying
++        if (Looper.myLooper() == Looper.getMainLooper()) {
++            applyPlayStateToViews(isPlaying)
++        } else {
++            mainHandler.post { applyPlayStateToViews(isPlaying) }
++        }
++    }
++
++    private fun applyPlayStateToViews(isPlaying: Boolean) {
++        ivPlay?.setImageResource(
++            if (isPlaying) R.drawable.ic_pause_24dp else R.drawable.ic_play_24dp
++        )
++        ivPlay?.contentDescription = context.getString(R.string.read_aloud_lyrics_play)
++        // 立刻收敛, 不等下一次前后台轮询
++        syncVisibility()
++    }
++
++    /** 播放/暂停切换, 供悬浮窗按钮与双击手势共用 */
++    private fun togglePlayPause() {
++        if (BaseReadAloudService.isPlay()) {
++            service.pauseReadAloud()
++            // 暂停后窗口会消失, 这里给一次轻提示, 免得用户以为程序挂了
++            context.toastOnUi(context.getString(R.string.read_aloud_lyrics_paused_tip))
++        } else {
++            service.resumeReadAloud()
++        }
++    }
++
++    // ------------------------------------------------------------------ 内部实现
++
++    /**
++     * 把缓存的句子文本刷到视图上。
++     * 视图尚未创建时所有 tv* 均为 null, 此处是一次空操作;
++     * 待 [createView] 结束后会自动再调用一次, 补齐窗口创建前收到的句子。
++     */
++    private fun applySentenceTexts() {
++        tvPrev?.text = pendingPrev.orEmpty()
++        tvNext?.text = pendingNext.orEmpty()
++        applyCurrentSentence(lastCharProgress)
++    }
++
++    private fun applyCurrentSentence(readChars: Int) {
++        val view = tvCurrent ?: return
++        val text = currentSentence
++        if (text.isEmpty()) {
++            view.text = ""
++            return
++        }
++        val normalColor = opaque(context.getPrefInt(
++            PreferKey.readAloudLyricsTextColor, DEFAULT_TEXT_COLOR
++        ))
++        val highlightColor = opaque(context.getPrefInt(
++            PreferKey.readAloudLyricsHighlightColor, DEFAULT_HIGHLIGHT_COLOR
++        ))
++        val progress = readChars.coerceIn(0, text.length)
++        // 已读部分 = 已读进度色, 未读部分 = 歌词原色。
++        // 两者都是**完全不透明**的: 透明度只用于窗口背景, 不参与前景渲染,
++        // 否则未读文字会随壁纸明暗而"看不清"。
++        // 默认两色相同, 所以默认观感是一整句均匀清晰的白字;
++        // 想看到逐字推进, 把「已读进度颜色」改成另一个颜色即可。
++        val spannable = SpannableString(text)
++        if (progress > 0) {
++            spannable.setSpan(
++                ForegroundColorSpan(highlightColor),
++                0, progress,
++                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
++            )
++        }
++        if (progress < text.length) {
++            spannable.setSpan(
++                ForegroundColorSpan(normalColor),
++                progress, text.length,
++                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
++            )
++        }
++        view.text = spannable
++    }
++
++    @SuppressLint("ClickableViewAccessibility", "InflateParams")
++    private fun createView(): View {
++        val view = LayoutInflater.from(context)
++            .inflate(R.layout.view_read_aloud_lyrics, null)
++        tvPrev = view.findViewById(R.id.tv_lyrics_prev)
++        tvCurrent = view.findViewById(R.id.tv_lyrics_current)
++        tvNext = view.findViewById(R.id.tv_lyrics_next)
++        llControls = view.findViewById(R.id.ll_lyrics_controls)
++        ivPrev = view.findViewById(R.id.iv_lyrics_prev)
++        ivPlay = view.findViewById(R.id.iv_lyrics_play)
++        ivNext = view.findViewById(R.id.iv_lyrics_next)
++        ivClose = view.findViewById(R.id.iv_lyrics_close)
++
++        ivPrev?.setOnClickListener { service.prevParagraph() }
++        ivPlay?.setOnClickListener { togglePlayPause() }
++        ivNext?.setOnClickListener { service.nextParagraph() }
++        ivClose?.setOnClickListener {
++            context.putPrefBoolean(PreferKey.readAloudLyrics, false)
++            context.toastOnUi(context.getString(R.string.read_aloud_lyrics_closed_tip))
++            hide()
++        }
++
++        view.setOnTouchListener { _, event -> handleTouch(event) }
++
++        layoutParams = buildLayoutParams()
++        view.setBackground(createBackground())
++        // 窗口创建前收到的句子在此补齐, 避免首次显示缺行
++        applySentenceTexts()
++        return view
++    }
++
++    private fun buildLayoutParams(): WindowManager.LayoutParams {
++        return WindowManager.LayoutParams(
++            WindowManager.LayoutParams.MATCH_PARENT,
++            WindowManager.LayoutParams.WRAP_CONTENT,
++            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
++            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
++                    or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
++            PixelFormat.TRANSLUCENT
++        ).apply {
++            gravity = Gravity.TOP or Gravity.START
++            x = 0
++            y = savedYOr(defaultY())
++        }
++    }
++
++    private fun defaultY(): Int =
++        (context.resources.displayMetrics.heightPixels * DEFAULT_Y_RATIO).toInt()
++
++    private fun savedYOr(fallback: Int): Int {
++        val saved = context.getPrefInt(PreferKey.readAloudLyricsY, POSITION_UNSET)
++        return if (saved >= 0) saved else fallback
++    }
++
++    /** 位置被重置(或从未拖动)时回落到默认位置; 拖动过的位置保持不动 */
++    private fun applyPositionPref() {
++        val view = rootView ?: return
++        val params = layoutParams ?: return
++        val saved = context.getPrefInt(PreferKey.readAloudLyricsY, POSITION_UNSET)
++        if (saved >= 0) return
++        val targetY = defaultY()
++        if (params.y == targetY) return
++        params.y = targetY
++        runCatching { windowManager.updateViewLayout(view, params) }
++    }
++
++    /** 圆角半透明黑底。透明度设置只作用于这里, 即窗口背景 */
++    private fun createBackground(): GradientDrawable {
++        val transparency =
++            context.getPrefInt(PreferKey.readAloudLyricsBgTransparency, DEFAULT_BG_TRANSPARENCY)
++                .coerceIn(0, 100)
++        val alpha = (255 * (100 - transparency) / 100f).toInt().coerceIn(0, 255)
++        return GradientDrawable().apply {
++            cornerRadius = dp(20f)
++            setColor(Color.argb(alpha, 0, 0, 0))
++        }
++    }
++
++    private fun applyTextAppearance() {
++        val sizeSp = context.getPrefInt(
++            PreferKey.readAloudLyricsTextSize, DEFAULT_TEXT_SIZE_SP
++        ).coerceIn(12, 48)
++        // 前景一律不透明: 上下句只靠字号区分, 不再靠"淡"区分
++        val normalColor = opaque(context.getPrefInt(
++            PreferKey.readAloudLyricsTextColor, DEFAULT_TEXT_COLOR
++        ))
++
++        tvCurrent?.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp.toFloat())
++        tvCurrent?.setTextColor(normalColor)
++        tvPrev?.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp * CONTEXT_TEXT_SIZE_RATIO)
++        tvNext?.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp * CONTEXT_TEXT_SIZE_RATIO)
++        tvPrev?.setTextColor(normalColor)
++        tvNext?.setTextColor(normalColor)
++        applyCurrentSentence(lastCharProgress)
++
++        listOfNotNull(ivPrev, ivPlay, ivNext, ivClose).forEach {
++            it.setColorFilter(normalColor)
++        }
++    }
++
++    private fun applyControlsVisibility() {
++        val showConfig = context.getPrefBoolean(PreferKey.readAloudLyricsShowControls, true)
++        val visible = showConfig && !controlsTempHidden
++        llControls?.visibility = if (visible) View.VISIBLE else View.GONE
++
++        val showContext = context.getPrefBoolean(PreferKey.readAloudLyricsShowContext, true)
++        val contextVisibility = if (showContext) View.VISIBLE else View.GONE
++        tvPrev?.visibility = contextVisibility
++        tvNext?.visibility = contextVisibility
++    }
++
++    private fun onLongPress() {
++        longPressFired = true
++        // 长按与双击互斥, 抬手时不应再被判定成双击
++        lastTapUptime = 0L
++        // 长按空白处: 在「纯文字」与「带按钮」之间切换
++        controlsTempHidden = !controlsTempHidden
++        applyControlsVisibility()
++        if (controlsTempHidden) {
++            // 极简模式下把窗口移到屏幕中部, 更接近歌词观感
++            layoutParams?.let { params ->
++                val view = rootView ?: return@let
++                val screenHeight = context.resources.displayMetrics.heightPixels
++                if (params.y < screenHeight / 4) {
++                    params.y = (screenHeight * 0.12f).toInt()
++                    runCatching { windowManager.updateViewLayout(view, params) }
++                }
++            }
++        }
++    }
++
++    private fun handleTouch(event: MotionEvent): Boolean {
++        val view = rootView ?: return false
++        val params = layoutParams ?: return false
++        when (event.actionMasked) {
++            MotionEvent.ACTION_DOWN -> {
++                downRawY = event.rawY
++                dragStartY = params.y
++                dragging = false
++                longPressFired = false
++                mainHandler.removeCallbacks(longPressRunnable)
++                mainHandler.postDelayed(longPressRunnable, LONG_PRESS_MS)
++                return true
++            }
++
++            MotionEvent.ACTION_MOVE -> {
++                val dy = event.rawY - downRawY
++                if (!dragging && abs(dy) > DRAG_SLOP_PX) {
++                    dragging = true
++                    lastTapUptime = 0L
++                    mainHandler.removeCallbacks(longPressRunnable)
++                }
++                if (dragging) {
++                    val screenHeight = context.resources.displayMetrics.heightPixels
++                    val maxY = (screenHeight - view.height).coerceAtLeast(0)
++                    params.y = (dragStartY + dy).toInt().coerceIn(0, maxY)
++                    runCatching { windowManager.updateViewLayout(view, params) }
++                }
++                return true
++            }
++
++            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
++                mainHandler.removeCallbacks(longPressRunnable)
++                val wasDragging = dragging
++                if (wasDragging) {
++                    context.putPrefInt(PreferKey.readAloudLyricsY, params.y)
++                }
++                dragging = false
++                if (event.actionMasked == MotionEvent.ACTION_UP && !wasDragging && !longPressFired) {
++                    handleTap(event.rawX, event.rawY)
++                } else {
++                    lastTapUptime = 0L
++                }
++                return true
++            }
++        }
++        return false
++    }
++
++    /**
++     * 单击/双击判定。
++     * 单击留给后续扩展(当前无动作); 双击 = 暂停 / 恢复朗读。
++     */
++    private fun handleTap(rawX: Float, rawY: Float) {
++        val now = SystemClock.uptimeMillis()
++        val withinTime = lastTapUptime != 0L && now - lastTapUptime <= DOUBLE_TAP_TIMEOUT_MS
++        val withinSlop = abs(rawX - lastTapRawX) <= DOUBLE_TAP_SLOP_PX &&
++                abs(rawY - lastTapRawY) <= DOUBLE_TAP_SLOP_PX
++        if (withinTime && withinSlop) {
++            lastTapUptime = 0L
++            log("双击: 切换播放/暂停")
++            togglePlayPause()
++        } else {
++            lastTapUptime = now
++            lastTapRawX = rawX
++            lastTapRawY = rawY
++        }
++    }
++
++    // ------------------------------------------------------------------ 工具
++
++    /** 仅在 debug 构建输出诊断日志, release 自动静默 */
++    private fun log(msg: String) {
++        if (BuildConfig.DEBUG) LogUtils.d(TAG, msg)
++    }
++
++    private fun dp(value: Float): Float = TypedValue.applyDimension(
++        TypedValue.COMPLEX_UNIT_DIP, value, context.resources.displayMetrics
++    )
++
++    /**
++     * 强制前景色完全不透明(alpha=0xFF)。
++     * 文字与图标的通透度不参与用户配置: 配置里的「背景透明度」只管背景,
++     * 这样任何壁纸下文字都保持清晰, 也避免历史配置里残留的半透明颜色生效。
++     */
++    private fun opaque(color: Int): Int =
++        Color.argb(255, Color.red(color), Color.green(color), Color.blue(color))
++}
+diff --git a/app/src/main/java/io/legado/app/ui/book/read/config/ReadAloudConfigDialog.kt b/app/src/main/java/io/legado/app/ui/book/read/config/ReadAloudConfigDialog.kt
+index b9f3c03..52e5d8a 100644
+--- a/app/src/main/java/io/legado/app/ui/book/read/config/ReadAloudConfigDialog.kt
++++ b/app/src/main/java/io/legado/app/ui/book/read/config/ReadAloudConfigDialog.kt
+@@ -1,7 +1,10 @@
+ package io.legado.app.ui.book.read.config
+ 
++import android.content.Intent
+ import android.content.SharedPreferences
++import android.net.Uri
+ import android.os.Bundle
++import android.provider.Settings
+ import android.view.LayoutInflater
+ import android.view.View
+ import android.view.ViewGroup
+@@ -24,6 +27,7 @@ import io.legado.app.utils.postEvent
+ import io.legado.app.utils.setEdgeEffectColor
+ import io.legado.app.utils.setLayout
+ import io.legado.app.utils.showDialogFragment
++import io.legado.app.utils.toastOnUi
+ 
+ class ReadAloudConfigDialog : BasePrefDialogFragment() {
+     private val readAloudPreferTag = "readAloudPreferTag"
+@@ -92,6 +96,7 @@ class ReadAloudConfigDialog : BasePrefDialogFragment() {
+                 PreferKey.ttsEngine -> showDialogFragment(SpeakEngineDialog())
+                 "sysTtsConfig" -> IntentHelp.openTTSSetting()
+                 "readAloudControls" -> showDialogFragment(ReadAloudControlsDialog())
++                "readAloudLyricsConfig" -> showDialogFragment(ReadAloudLyricsConfigDialog())
+             }
+             return super.onPreferenceTreeClick(preference)
+         }
+@@ -112,6 +117,31 @@ class ReadAloudConfigDialog : BasePrefDialogFragment() {
+                         it.isEnabled = AppConfig.ignoreAudioFocus
+                     }
+                 }
++
++                PreferKey.readAloudLyrics -> {
++                    val enabled = sharedPreferences?.getBoolean(key, false) == true
++                    if (enabled && !Settings.canDrawOverlays(requireContext())) {
++                        // 没有悬浮窗权限时无法显示, 开关回退并引导去授权
++                        findPreference<SwitchPreference>(PreferKey.readAloudLyrics)?.isChecked =
++                            false
++                        requestOverlayPermission()
++                    }
++                    postEvent(EventBus.READ_ALOUD_LYRICS_CONFIG, true)
++                }
++            }
++        }
++
++        /** 桌面歌词需要「显示在其他应用上层」权限 */
++        private fun requestOverlayPermission() {
++            val ctx = context ?: return
++            ctx.toastOnUi(ctx.getString(R.string.read_aloud_lyrics_permission_denied))
++            runCatching {
++                startActivity(
++                    Intent(
++                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
++                        Uri.parse("package:${ctx.packageName}")
++                    )
++                )
+             }
+         }
+ 
+diff --git a/app/src/main/java/io/legado/app/ui/book/read/config/ReadAloudLyricsConfigDialog.kt b/app/src/main/java/io/legado/app/ui/book/read/config/ReadAloudLyricsConfigDialog.kt
+new file mode 100644
+index 0000000..3c0054f
+--- /dev/null
++++ b/app/src/main/java/io/legado/app/ui/book/read/config/ReadAloudLyricsConfigDialog.kt
+@@ -0,0 +1,101 @@
++package io.legado.app.ui.book.read.config
++
++import android.content.SharedPreferences
++import android.os.Bundle
++import android.view.LayoutInflater
++import android.view.View
++import android.view.ViewGroup
++import android.widget.LinearLayout
++import androidx.preference.Preference
++import io.legado.app.R
++import io.legado.app.base.BasePrefDialogFragment
++import io.legado.app.constant.EventBus
++import io.legado.app.constant.PreferKey
++import io.legado.app.lib.prefs.fragment.PreferenceFragment
++import io.legado.app.lib.theme.backgroundColor
++import io.legado.app.ui.book.read.ReadBookActivity
++import io.legado.app.utils.postEvent
++import io.legado.app.utils.putPrefInt
++import io.legado.app.utils.setLayout
++import io.legado.app.utils.toastOnUi
++import splitties.init.appCtx
++
++/**
++ * 朗读桌面歌词: 外观配置(字号/颜色/透明度/上下句/按钮/显示时机/位置)
++ */
++class ReadAloudLyricsConfigDialog : BasePrefDialogFragment() {
++
++    companion object {
++        private const val TAG_FRAGMENT = "readAloudLyricsConfig"
++    }
++
++    override fun onStart() {
++        super.onStart()
++        dialog?.window?.run {
++            setBackgroundDrawableResource(R.color.transparent)
++            setLayout(.9f, .8f)
++        }
++    }
++
++    override fun onCreateView(
++        inflater: LayoutInflater,
++        container: ViewGroup?,
++        savedInstanceState: Bundle?
++    ): View {
++        (activity as? ReadBookActivity)?.let { it.bottomDialog++ }
++        return LinearLayout(requireContext()).apply {
++            id = R.id.tag1
++            setBackgroundColor(context.backgroundColor)
++        }
++    }
++
++    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
++        super.onViewCreated(view, savedInstanceState)
++        if (childFragmentManager.findFragmentByTag(TAG_FRAGMENT) == null) {
++            childFragmentManager.beginTransaction()
++                .replace(view.id, LyricsPreferenceFragment(), TAG_FRAGMENT)
++                .commit()
++        }
++    }
++
++    class LyricsPreferenceFragment : PreferenceFragment(),
++        SharedPreferences.OnSharedPreferenceChangeListener {
++
++        override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
++            addPreferencesFromResource(R.xml.pref_config_lyrics)
++        }
++
++        override fun onResume() {
++            super.onResume()
++            preferenceManager.sharedPreferences?.registerOnSharedPreferenceChangeListener(this)
++        }
++
++        override fun onPause() {
++            preferenceManager.sharedPreferences?.unregisterOnSharedPreferenceChangeListener(this)
++            super.onPause()
++        }
++
++        /** 任一外观项变化都实时刷新悬浮窗 */
++        override fun onSharedPreferenceChanged(
++            sharedPreferences: SharedPreferences?,
++            key: String?
++        ) {
++            postEvent(EventBus.READ_ALOUD_LYRICS_CONFIG, true)
++        }
++
++        override fun onPreferenceTreeClick(preference: Preference): Boolean {
++            if (preference.key == KEY_RESET_POSITION) {
++                // -1 表示未设置, 悬浮窗会回落到默认位置
++                appCtx.putPrefInt(PreferKey.readAloudLyricsY, -1)
++                appCtx.toastOnUi(R.string.read_aloud_lyrics_reset_position_summary)
++                postEvent(EventBus.READ_ALOUD_LYRICS_CONFIG, true)
++                return true
++            }
++            return super.onPreferenceTreeClick(preference)
++        }
++
++        companion object {
++            private const val KEY_RESET_POSITION = "readAloudLyricsResetPosition"
++        }
++    }
++}
+diff --git a/app/src/main/res/layout/view_read_aloud_lyrics.xml b/app/src/main/res/layout/view_read_aloud_lyrics.xml
+new file mode 100644
+index 0000000..922ba13
+--- /dev/null
++++ b/app/src/main/res/layout/view_read_aloud_lyrics.xml
+@@ -0,0 +1,99 @@
++<?xml version="1.0" encoding="utf-8"?><!--
++  朗读「桌面歌词」悬浮窗布局。
++  注意: 该布局由 Service 通过 WindowManager 挂载, 使用的 Context 为 Application,
++  因此这里不要引用自定义主题属性(?attr/xxx), 颜色与背景一律在代码中设置。
++-->
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    android:id="@+id/lyrics_root"
++    android:layout_width="match_parent"
++    android:layout_height="wrap_content"
++    android:orientation="vertical"
++    android:paddingStart="16dp"
++    android:paddingEnd="16dp"
++    android:paddingTop="12dp"
++    android:paddingBottom="10dp">
++
++    <!-- 上一句(淡) -->
++    <TextView
++        android:id="@+id/tv_lyrics_prev"
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:ellipsize="end"
++        android:gravity="center"
++        android:maxLines="1"
++        android:textSize="13sp" />
++
++    <!-- 当前句(高亮, 支持逐字着色) -->
++    <TextView
++        android:id="@+id/tv_lyrics_current"
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:layout_marginTop="4dp"
++        android:ellipsize="end"
++        android:gravity="center"
++        android:lineSpacingExtra="3dp"
++        android:maxLines="3"
++        android:textSize="20sp"
++        android:textStyle="bold" />
++
++    <!-- 下一句(淡) -->
++    <TextView
++        android:id="@+id/tv_lyrics_next"
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:layout_marginTop="4dp"
++        android:ellipsize="end"
++        android:gravity="center"
++        android:maxLines="1"
++        android:textSize="13sp" />
++
++    <!-- 控制按钮: 上一句 / 播放暂停 / 下一句 / 关闭 -->
++    <LinearLayout
++        android:id="@+id/ll_lyrics_controls"
++        android:layout_width="wrap_content"
++        android:layout_height="wrap_content"
++        android:layout_gravity="center_horizontal"
++        android:layout_marginTop="2dp"
++        android:orientation="horizontal">
++
++        <ImageButton
++            android:id="@+id/iv_lyrics_prev"
++            android:layout_width="40dp"
++            android:layout_height="40dp"
++            android:background="@android:color/transparent"
++            android:contentDescription="@string/read_aloud_lyrics_prev"
++            android:padding="9dp"
++            android:scaleType="centerInside"
++            android:src="@drawable/ic_skip_previous" />
++
++        <ImageButton
++            android:id="@+id/iv_lyrics_play"
++            android:layout_width="40dp"
++            android:layout_height="40dp"
++            android:background="@android:color/transparent"
++            android:contentDescription="@string/read_aloud_lyrics_play"
++            android:padding="9dp"
++            android:scaleType="centerInside"
++            android:src="@drawable/ic_pause_24dp" />
++
++        <ImageButton
++            android:id="@+id/iv_lyrics_next"
++            android:layout_width="40dp"
++            android:layout_height="40dp"
++            android:background="@android:color/transparent"
++            android:contentDescription="@string/read_aloud_lyrics_next"
++            android:padding="9dp"
++            android:scaleType="centerInside"
++            android:src="@drawable/ic_skip_next" />
++
++        <ImageButton
++            android:id="@+id/iv_lyrics_close"
++            android:layout_width="40dp"
++            android:layout_height="40dp"
++            android:background="@android:color/transparent"
++            android:contentDescription="@string/read_aloud_lyrics_close"
++            android:padding="9dp"
++            android:scaleType="centerInside"
++            android:src="@drawable/ic_baseline_close" />
++    </LinearLayout>
++</LinearLayout>
+diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
+index 48d5b07..5ddf657 100644
+--- a/app/src/main/res/values-zh/strings.xml
++++ b/app/src/main/res/values-zh/strings.xml
+@@ -2,6 +2,7 @@
+     <!--App-->
+     <string name="app_name">阅读</string>
+     <string name="app_name_a">阅读·A</string>
++    <string name="app_name_custom">阅读·歌词版</string>
+     <string name="receiving_shared_label">阅读·搜索</string>
+     <string name="receiving_shared_import_label">阅读·导入</string>
+     <string name="tip_perm_request_storage">阅读需要访问存储卡权限，请前往“设置”—“应用权限”，打开所需权限</string>
+@@ -1377,6 +1378,34 @@
+     <string name="web_service_wake_lock_summary">开启web服务的时候启用唤醒锁,有些手机开启唤醒锁会被杀后台</string>
+     <string name="read_aloud_wake_lock">朗读服务唤醒锁</string>
+     <string name="read_aloud_wake_lock_summary">开启朗读的时候启用唤醒锁,有些手机开启唤醒锁会被杀后台</string>
++
++    <!--朗读桌面歌词(系统悬浮窗)-->
++    <string name="read_aloud_lyrics">桌面歌词</string>
++    <string name="read_aloud_lyrics_summary">朗读时在其它应用之上悬浮显示正在朗读的句子，效果类似音乐软件的桌面歌词。双击歌词可暂停/恢复，长按隐藏按钮，拖动可换位置；暂停时歌词会自动收起，重新播放后再次出现</string>
++    <string name="read_aloud_lyrics_config">歌词外观</string>
++    <string name="read_aloud_lyrics_config_summary">字号、颜色、透明度与位置</string>
++    <string name="read_aloud_lyrics_text_size">歌词字号</string>
++    <string name="read_aloud_lyrics_text_color">歌词颜色</string>
++    <string name="read_aloud_lyrics_text_color_summary">当前句未读部分的颜色，始终保持不透明</string>
++    <string name="read_aloud_lyrics_highlight_color">已读进度颜色</string>
++    <string name="read_aloud_lyrics_highlight_color_summary">默认与歌词颜色相同（此时看不到逐字变化）；想看到逐字点亮进度，请另选一个颜色</string>
++    <string name="read_aloud_lyrics_bg_transparency">背景透明度</string>
++    <string name="read_aloud_lyrics_bg_transparency_summary">只作用于悬浮窗背景，文字始终保持清晰不透明</string>
++    <string name="read_aloud_lyrics_show_context">显示上下句</string>
++    <string name="read_aloud_lyrics_show_context_summary">显示当前句的上一句与下一句（字号较小）</string>
++    <string name="read_aloud_lyrics_show_controls">显示控制按钮</string>
++    <string name="read_aloud_lyrics_show_controls_summary">上一句 / 播放暂停 / 下一句 / 关闭</string>
++    <string name="read_aloud_lyrics_only_background">仅应用在后台时显示</string>
++    <string name="read_aloud_lyrics_only_background_summary">阅读界面在前台时隐藏悬浮歌词</string>
++    <string name="read_aloud_lyrics_reset_position">重置悬浮位置</string>
++    <string name="read_aloud_lyrics_reset_position_summary">把悬浮窗移回屏幕顶部</string>
++    <string name="read_aloud_lyrics_permission_denied">桌面歌词需要「显示在其他应用上层」权限</string>
++    <string name="read_aloud_lyrics_prev">上一句</string>
++    <string name="read_aloud_lyrics_play">播放/暂停</string>
++    <string name="read_aloud_lyrics_next">下一句</string>
++    <string name="read_aloud_lyrics_close">关闭桌面歌词</string>
++    <string name="read_aloud_lyrics_closed_tip">已关闭桌面歌词</string>
++    <string name="read_aloud_lyrics_paused_tip">已暂停朗读，歌词暂时收起；从通知栏或应用内继续播放即可恢复显示</string>
+     <string name="audio_play_wake_lock">音频服务唤醒锁</string>
+     <string name="audio_play_wake_lock_summary">播放音频的时候启用唤醒锁,有些手机开启唤醒锁会被杀后台</string>
+     <string name="change_search_scope">切换搜索范围</string>
+diff --git a/app/src/main/res/values/colors_lyrics.xml b/app/src/main/res/values/colors_lyrics.xml
+new file mode 100644
+index 0000000..0b5477f
+--- /dev/null
++++ b/app/src/main/res/values/colors_lyrics.xml
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <!--朗读桌面歌词: 默认配色-->
++    <color name="read_aloud_lyrics_default_text">#FFFFFFFF</color>
++    <!-- 默认与正文同色: 逐字推进只体现为明暗变化, 不出现突兀的换色 -->
++    <color name="read_aloud_lyrics_default_highlight">#FFFFFFFF</color>
++</resources>
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index c467296..e7e1716 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -3,6 +3,7 @@
+     <!--App-->
+     <string name="app_name">Legado</string>
+     <string name="app_name_a">Legado·A</string>
++    <string name="app_name_custom">Legado·Lyrics</string>
+     <string name="app_name_s" translatable="false">LegadoPlus</string>
+     <string name="receiving_shared_label">Legado·search</string>
+     <string name="receiving_shared_import_label">Legado·import</string>
+@@ -1382,6 +1383,34 @@
+     <string name="web_service_wake_lock_summary">The wake-up lock is enabled when the web service is enabled, and some phones will be killed when the wake-up lock is enabled.</string>
+     <string name="read_aloud_wake_lock">Read aloud service wake-up lock</string>
+     <string name="read_aloud_wake_lock_summary">The wake-up lock is enabled when reading aloud is enabled, and the wake-up lock on some mobile phones will be killed in the background.</string>
++
++    <!--Read aloud desktop lyrics (system overlay)-->
++    <string name="read_aloud_lyrics">Desktop lyrics</string>
++    <string name="read_aloud_lyrics_summary">Show the sentence being read aloud in a floating window on top of other apps, just like music player lyrics. Double-tap to pause or resume, long-press to hide the buttons, drag to move. The window hides while paused and comes back when playback resumes</string>
++    <string name="read_aloud_lyrics_config">Lyrics appearance</string>
++    <string name="read_aloud_lyrics_config_summary">Text size, colors, transparency and position</string>
++    <string name="read_aloud_lyrics_text_size">Lyrics text size</string>
++    <string name="read_aloud_lyrics_text_color">Lyrics color</string>
++    <string name="read_aloud_lyrics_text_color_summary">Color of the unread part of the current sentence, always fully opaque</string>
++    <string name="read_aloud_lyrics_highlight_color">Reading position color</string>
++    <string name="read_aloud_lyrics_highlight_color_summary">Same as the lyrics color by default (no visible sweep); pick a different color to see the word-by-word progress</string>
++    <string name="read_aloud_lyrics_bg_transparency">Background transparency</string>
++    <string name="read_aloud_lyrics_bg_transparency_summary">Affects the window background only — text always stays crisp and fully opaque</string>
++    <string name="read_aloud_lyrics_show_context">Show neighbour sentences</string>
++    <string name="read_aloud_lyrics_show_context_summary">Display the previous and next sentence in a smaller text size</string>
++    <string name="read_aloud_lyrics_show_controls">Show control buttons</string>
++    <string name="read_aloud_lyrics_show_controls_summary">Previous / play-pause / next / close</string>
++    <string name="read_aloud_lyrics_only_background">Only when app is in background</string>
++    <string name="read_aloud_lyrics_only_background_summary">Hide the floating lyrics while the reading page is on screen</string>
++    <string name="read_aloud_lyrics_reset_position">Reset position</string>
++    <string name="read_aloud_lyrics_reset_position_summary">Move the floating window back to the top of the screen</string>
++    <string name="read_aloud_lyrics_permission_denied">"Display over other apps" permission is required for desktop lyrics</string>
++    <string name="read_aloud_lyrics_prev">Previous sentence</string>
++    <string name="read_aloud_lyrics_play">Play or pause</string>
++    <string name="read_aloud_lyrics_next">Next sentence</string>
++    <string name="read_aloud_lyrics_close">Close desktop lyrics</string>
++    <string name="read_aloud_lyrics_closed_tip">Desktop lyrics closed</string>
++    <string name="read_aloud_lyrics_paused_tip">Reading paused. Double-tap is not available while hidden — resume from the notification or the app</string>
+     <string name="audio_play_wake_lock">Audio service wake-up lock</string>
+     <string name="audio_play_wake_lock_summary">The wake-up lock is enabled when playing audio, and some phones will be killed when the wake-up lock is turned on.</string>
+     <string name="change_search_scope">Toggle search scope</string>
+diff --git a/app/src/main/res/xml/pref_config_aloud.xml b/app/src/main/res/xml/pref_config_aloud.xml
+index c5e329a..a480551 100644
+--- a/app/src/main/res/xml/pref_config_aloud.xml
++++ b/app/src/main/res/xml/pref_config_aloud.xml
+@@ -68,6 +68,19 @@
+             android:title="@string/read_aloud_controls"
+             app:iconSpaceReserved="false" />
+ 
++        <io.legado.app.lib.prefs.SwitchPreference
++            android:defaultValue="false"
++            android:key="readAloudLyrics"
++            android:summary="@string/read_aloud_lyrics_summary"
++            android:title="@string/read_aloud_lyrics"
++            app:iconSpaceReserved="false" />
++
++        <io.legado.app.lib.prefs.Preference
++            android:key="readAloudLyricsConfig"
++            android:summary="@string/read_aloud_lyrics_config_summary"
++            android:title="@string/read_aloud_lyrics_config"
++            app:iconSpaceReserved="false" />
++
+         <io.legado.app.lib.prefs.Preference
+             android:title="@string/speak_engine"
+             android:summary="TTS"
+diff --git a/app/src/main/res/xml/pref_config_lyrics.xml b/app/src/main/res/xml/pref_config_lyrics.xml
+new file mode 100644
+index 0000000..589e5b9
+--- /dev/null
++++ b/app/src/main/res/xml/pref_config_lyrics.xml
+@@ -0,0 +1,75 @@
++<?xml version="1.0" encoding="utf-8"?>
++<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
++    xmlns:app="http://schemas.android.com/apk/res-auto">
++
++    <io.legado.app.lib.prefs.PreferenceCategory
++        android:title="@string/read_aloud_lyrics_config"
++        app:allowDividerAbove="false"
++        app:allowDividerBelow="false"
++        app:iconSpaceReserved="false" />
++
++    <io.legado.app.lib.prefs.SeekBarPreference
++        android:clickable="false"
++        android:defaultValue="20"
++        android:key="readAloudLyricsTextSize"
++        android:title="@string/read_aloud_lyrics_text_size"
++        app:MaxValue="36"
++        app:MinValue="12"
++        app:iconSpaceReserved="false"
++        app:selectable="false" />
++
++    <io.legado.app.lib.prefs.ColorPreference
++        android:defaultValue="@color/read_aloud_lyrics_default_text"
++        android:key="readAloudLyricsTextColor"
++        android:summary="@string/read_aloud_lyrics_text_color_summary"
++        android:title="@string/read_aloud_lyrics_text_color"
++        app:cpv_dialogType="preset"
++        app:iconSpaceReserved="false" />
++
++    <io.legado.app.lib.prefs.ColorPreference
++        android:defaultValue="@color/read_aloud_lyrics_default_highlight"
++        android:key="readAloudLyricsHighlightColor"
++        android:summary="@string/read_aloud_lyrics_highlight_color_summary"
++        android:title="@string/read_aloud_lyrics_highlight_color"
++        app:cpv_dialogType="preset"
++        app:iconSpaceReserved="false" />
++
++    <io.legado.app.lib.prefs.SeekBarPreference
++        android:clickable="false"
++        android:defaultValue="45"
++        android:key="readAloudLyricsBgTransparency"
++        android:summary="@string/read_aloud_lyrics_bg_transparency_summary"
++        android:title="@string/read_aloud_lyrics_bg_transparency"
++        app:MaxValue="100"
++        app:MinValue="0"
++        app:iconSpaceReserved="false"
++        app:selectable="false" />
++
++    <io.legado.app.lib.prefs.SwitchPreference
++        android:defaultValue="true"
++        android:key="readAloudLyricsShowContext"
++        android:summary="@string/read_aloud_lyrics_show_context_summary"
++        android:title="@string/read_aloud_lyrics_show_context"
++        app:iconSpaceReserved="false" />
++
++    <io.legado.app.lib.prefs.SwitchPreference
++        android:defaultValue="true"
++        android:key="readAloudLyricsShowControls"
++        android:summary="@string/read_aloud_lyrics_show_controls_summary"
++        android:title="@string/read_aloud_lyrics_show_controls"
++        app:iconSpaceReserved="false" />
++
++    <io.legado.app.lib.prefs.SwitchPreference
++        android:defaultValue="true"
++        android:key="readAloudLyricsOnlyBackground"
++        android:summary="@string/read_aloud_lyrics_only_background_summary"
++        android:title="@string/read_aloud_lyrics_only_background"
++        app:iconSpaceReserved="false" />
++
++    <io.legado.app.lib.prefs.Preference
++        android:key="readAloudLyricsResetPosition"
++        android:summary="@string/read_aloud_lyrics_reset_position_summary"
++        android:title="@string/read_aloud_lyrics_reset_position"
++        app:iconSpaceReserved="false" />
++
++</androidx.preference.PreferenceScreen>
