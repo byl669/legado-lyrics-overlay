@@ -2,6 +2,7 @@ package io.legado.app.help.update
 
 import androidx.annotation.Keep
 import io.legado.app.constant.AppConst
+import io.legado.app.constant.AppLog
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.coroutine.Coroutine
 import io.legado.app.help.http.newCallResponse
@@ -52,6 +53,8 @@ object AppUpdateCustom : AppUpdate.AppUpdateInterface {
         val pubDate: String? = null,
     )
 
+    private const val TAG = "AppUpdateCustom"
+
     private suspend fun fetchManifest(): Manifest {
         var lastError = "无可用镜像"
         for (mirror in manifestUrls) {
@@ -61,6 +64,7 @@ object AppUpdateCustom : AppUpdate.AppUpdateInterface {
                 }
                 if (!res.isSuccessful) {
                     lastError = "更新服务器返回 ${res.code}"
+                    AppLog.put("$TAG 镜像失败 $mirror -> HTTP ${res.code}")
                     res.close()
                     continue
                 }
@@ -68,17 +72,21 @@ object AppUpdateCustom : AppUpdate.AppUpdateInterface {
                 res.close()
                 if (body.isBlank()) {
                     lastError = "更新清单为空"
+                    AppLog.put("$TAG 镜像空响应 $mirror")
                     continue
                 }
                 val manifest = runCatching {
                     GSON.fromJson(body, Manifest::class.java)
                 }.getOrNull()
                 if (manifest != null && manifest.versionCode > 0 && manifest.url.isNotBlank()) {
+                    AppLog.put("$TAG 命中镜像 $mirror -> vc=${manifest.versionCode} vn=${manifest.versionName}")
                     return manifest
                 }
                 lastError = "更新清单格式错误"
+                AppLog.put("$TAG 清单格式错误 $mirror")
             } catch (e: Exception) {
                 lastError = e.localizedMessage ?: e.javaClass.simpleName
+                AppLog.put("$TAG 镜像异常 $mirror -> $lastError")
             }
         }
         // 明确失败，绝不静默误报「已是最新」
@@ -96,8 +104,10 @@ object AppUpdateCustom : AppUpdate.AppUpdateInterface {
         return Coroutine.async(scope) {
             val manifest = fetchManifest()
             if (manifest.versionCode <= AppConst.appInfo.versionCode) {
+                AppLog.put("$TAG 已是最新：远端 ${manifest.versionCode} <= 本地 ${AppConst.appInfo.versionCode}")
                 throw NoStackTraceException("已是最新版本")
             }
+            AppLog.put("$TAG 发现新版本 ${manifest.versionName}（${manifest.versionCode} > ${AppConst.appInfo.versionCode}）")
             AppUpdate.UpdateInfo(
                 tagName = manifest.versionName.ifBlank { "v${manifest.versionCode}" },
                 updateLog = manifest.notes.ifBlank { "更新内容见发布页" },
