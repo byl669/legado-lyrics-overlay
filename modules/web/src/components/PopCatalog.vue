@@ -6,7 +6,7 @@
     <div class="title">目录</div>
     <virtual-list
       style="height: 300px; overflow: auto"
-      :class="{ night: isNight, day: !isNight }"
+      :class="{ night: isNight, day: !isNight, oled: isOled }"
       ref="virtualListRef"
       data-key="index"
       wrap-class="data-wrapper"
@@ -31,7 +31,8 @@ const store = useBookStore()
 const { catalog, popCataVisible, miniInterface } = storeToRefs(store)
 
 //主题
-const isNight = computed(() => store.theme)
+const isNight = computed(() => store.isNight)
+const isOled = computed(() => store.isOled)
 const theme = computed(() => store.theme)
 const popupTheme = computed(() => {
   return {
@@ -122,8 +123,18 @@ const gotoChapter = (chapter: BookChapter) => {
   }
 
   .night {
+    color: #dddddd;
+
     :deep(.cata) {
-      border-bottom: 1px solid #666;
+      border-bottom: 1px solid #333;
+    }
+  }
+
+  .night.oled {
+    color: #efefef;
+
+    :deep(.cata) {
+      border-bottom: 1px solid #1f1f1f;
     }
   }
 

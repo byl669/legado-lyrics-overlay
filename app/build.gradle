@@ -21,15 +21,18 @@ static def releaseTime() {
 }
 
 def name = "legado"
-def version = "3." + releaseTime()
+// 定制版：可用 -PversionName 显式指定（默认 3.yyMMddHH，精度只到小时，同小时内多次打包会重名）
+def version = project.findProperty("versionName")?.toString() ?: ("3." + releaseTime())
 // 定制版说明: 仓库为浅克隆, 拿不到基线 commit 因此 rev-list 计算会失败
 // 官方原版发布包 versionCode=37456, 这里给定更高值保证升级方向正确;
 // 也可在命令行用 -PversionCode=xxxxx 覆盖
-def versionCodeValue = project.findProperty("versionCode")?.toString()?.toInteger() ?: 38200
+def explicitVersionCode = project.findProperty("versionCode")?.toString()
+def versionCodeValue = explicitVersionCode?.toInteger() ?: 38200
 // Preserve the published code at this point, then ignore GitHub wrapper merge commits.
 def versionCodeBaseCommit = '9639f027fbc8cfdf57ce136a9e0c98829a235aef'
 def versionCodeAtBase = 37540
-try {
+// 显式指定了 versionCode 就不再用 git 提交数推算，避免覆盖调用方意图
+if (explicitVersionCode == null) try {
     def gitCount = providers.exec {
         commandLine 'git', 'rev-list', "${versionCodeBaseCommit}..HEAD", '--count', '--no-merges'
         ignoreExitValue = true

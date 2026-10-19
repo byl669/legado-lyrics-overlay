@@ -120,7 +120,7 @@ const subJustify = computed(() =>
           width: fit-content;
           font-size: 16px;
           font-weight: 700;
-          color: #33373d;
+          color: var(--el-text-color-primary);
         }
 
         .sub {
@@ -130,7 +130,7 @@ const subJustify = computed(() =>
           justify-content: v-bind('subJustify');
           font-size: 12px;
           font-weight: 600;
-          color: #6b6b6b;
+          color: var(--el-text-color-regular);
           .tags {
             :deep(.el-tag) {
               margin-right: 0.5em;
@@ -147,7 +147,7 @@ const subJustify = computed(() =>
         .intro,
         .dur-chapter,
         .last-chapter {
-          color: #969ba3;
+          color: var(--el-text-color-secondary);
           font-size: 13px;
           margin-top: 3px;
           font-weight: 500;
@@ -164,7 +164,7 @@ const subJustify = computed(() =>
     }
 
     .book:hover {
-      background: rgba(0, 0, 0, 0.1);
+      background: var(--el-fill-color-light);
       transition-duration: 0.5s;
     }
   }
@@ -193,4 +193,5 @@ const subJustify = computed(() =>
     }
   }
 }
+
 </style>

@@ -2,7 +2,7 @@
   <div
     class="chapter-wrapper"
     :style="bodyTheme"
-    :class="{ night: isNight, day: !isNight }"
+    :class="{ night: isNight, day: !isNight, oled: isOled }"
     @click="showToolBar = !showToolBar"
   >
     <div class="tool-bar" :style="leftBarTheme">
@@ -122,6 +122,7 @@ import API from '@api'
 import { useLoading } from '@/hooks/loading'
 import { useThrottleFn } from '@vueuse/shared'
 import { isNullOrBlank } from '@/utils/utils'
+import { resolveTextColor } from '@/utils/readerTheme'
 import { trimChapterWindowBeforeAppend } from '@/utils/chapterWindow'
 import ReviewDialog from '@/components/ReviewDialog.vue'
 import LegacyReviewDialog from '@/components/LegacyReviewDialog.vue'
@@ -143,6 +144,7 @@ const {
   bookProgress,
   theme,
   isNight,
+  isOled,
 } = storeToRefs(store)
 
 const chapterPos = computed({
@@ -243,6 +245,7 @@ const chapterTheme = computed(() => {
   return {
     background: chapterColor.value,
     width: readWidth.value,
+    color: resolveTextColor(store.config),
   }
 })
 const showToolBar = ref(false)
@@ -862,22 +865,44 @@ onBeforeRouteLeave(async (to, from, next) => {
   }
 
   :deep(.tool-icon) {
-    border: 1px solid #444;
+    border: 1px solid #3a3a3a;
     margin-top: -1px;
-    color: #666;
+    color: #d2d2d2;
 
     .icon-text {
-      color: #666;
+      color: #a4a4a4;
     }
   }
 
   :deep(.chapter) {
-    border: 1px solid #444;
-    color: #666;
+    border: 1px solid #3a3a3a;
+    color: #e8e2d6;
   }
 
   :deep(.popper__arrow) {
     background: #666;
+  }
+}
+
+/* OLED 纯黑：去掉多余的灰色描边，让文字对比最大化 */
+.oled {
+  :deep(.popup) {
+    box-shadow:
+      0 0 0 1px #1f1f1f,
+      0 4px 16px rgba(0, 0, 0, 0.9);
+  }
+
+  :deep(.tool-icon) {
+    border-color: #232323;
+    color: #e6e6e6;
+
+    .icon-text {
+      color: #b3b3b3;
+    }
+  }
+
+  :deep(.chapter) {
+    border-color: #151515;
   }
 }
 

@@ -2,7 +2,7 @@
   <div
     class="settings-wrapper"
     :style="popupTheme"
-    :class="{ night: isNight, day: !isNight }"
+    :class="{ night: isNight, day: !isNight, oled: isOled }"
   >
     <div class="settings-title">设置</div>
     <div class="setting-list">
@@ -16,10 +16,28 @@
             :style="themeColor"
             ref="themes"
             @click="setTheme(index)"
-            :class="{ selected: theme == index }"
+            :class="{ selected: theme == index, 'oled-item': index == 7 }"
+            :title="index == 7 ? 'OLED 纯黑' : ''"
             ><em v-if="index < 6" class="iconfont">&#58980;</em
             ><em v-else class="moon-icon">{{ moonIcon }}</em></span
           >
+        </li>
+        <li class="text-color-list">
+          <i>文字颜色</i>
+          <span
+            class="text-color-item"
+            v-for="(color, index) in textColorPresets"
+            :key="index"
+            :class="{ selected: currentTextColor === color.value }"
+            :title="color.name"
+            @click="setTextColor(color.value)"
+          >
+            <em
+              class="color-dot"
+              :style="{ background: resolveTextColor({ theme, textColor: color.value }) }"
+            ></em>
+            <span class="color-name">{{ color.name }}</span>
+          </span>
         </li>
         <li class="font-list">
           <i>正文字体</i>
@@ -174,7 +192,8 @@
 <script setup lang="ts">
 import '../assets/fonts/popfont.css'
 import '../assets/fonts/iconfont.css'
-import settings from '../config/themeConfig'
+import settings, { textColorPresets } from '../config/themeConfig'
+import { resolveTextColor } from '@/utils/readerTheme'
 import API from '@api'
 import { useDebounceFn } from '@vueuse/shared'
 
@@ -197,6 +216,7 @@ watch(
 //主题颜色
 const theme = computed(() => store.theme)
 const isNight = computed(() => store.isNight)
+const isOled = computed(() => store.isOled)
 const moonIcon = computed(() => (theme.value == 6 ? '' : ''))
 const themeColors = [
   {
@@ -220,6 +240,9 @@ const themeColors = [
   {
     background: 'rgba(0, 0, 0, 0.5)',
   },
+  {
+    background: '#000000',
+  },
 ]
 const popupTheme = computed(() => {
   return {
@@ -228,6 +251,12 @@ const popupTheme = computed(() => {
 })
 const setTheme = (theme: number) => {
   store.config.theme = theme
+}
+
+//正文文字颜色
+const currentTextColor = computed(() => store.config.textColor || '')
+const setTextColor = (color: string) => {
+  store.config.textColor = color
 }
 
 //预置字体
@@ -435,6 +464,7 @@ const setInfiniteLoading = (loading: boolean) => {
       }
 
       .font-list,
+      .text-color-list,
       .infinite-loading {
         margin-top: 28px;
 
@@ -468,6 +498,45 @@ const setInfiniteLoading = (loading: boolean) => {
         .infinite-loading-item:hover {
           border: 1px solid #ed4259;
           color: #ed4259;
+        }
+      }
+
+      .text-color-list {
+        .text-color-item {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          height: 34px;
+          padding: 0 11px;
+          margin: 0 8px 8px 0;
+          border: 1px solid transparent;
+          border-radius: 2px;
+          cursor: pointer;
+          font-size: 13px;
+          vertical-align: middle;
+
+          .color-dot {
+            width: 15px;
+            height: 15px;
+            flex: 0 0 auto;
+            border-radius: 50%;
+            border: 1px solid rgba(0, 0, 0, 0.25);
+            font-style: normal;
+          }
+
+          .color-name {
+            line-height: 1;
+            white-space: nowrap;
+          }
+
+          &.selected {
+            color: #ed4259;
+            border-color: #ed4259;
+          }
+
+          &:hover {
+            border-color: #ed4259;
+          }
         }
       }
 
@@ -522,6 +591,10 @@ const setInfiniteLoading = (loading: boolean) => {
 }
 
 .night {
+  .setting-list ul li i {
+    color: #b2b2b2;
+  }
+
   :deep(.theme-item) {
     border: 1px solid #666;
   }
@@ -550,6 +623,26 @@ const setInfiniteLoading = (loading: boolean) => {
     b {
       border-right: 1px solid #666;
     }
+  }
+
+  .text-color-item:not(.selected) {
+    border-color: #333;
+    color: #d8d8d8;
+
+    .color-dot {
+      border-color: rgba(255, 255, 255, 0.28);
+    }
+  }
+}
+
+.oled {
+  .setting-list ul li i {
+    color: #c4c4c4;
+  }
+
+  .text-color-item:not(.selected) {
+    border-color: #262626;
+    color: #ebebeb;
   }
 }
 

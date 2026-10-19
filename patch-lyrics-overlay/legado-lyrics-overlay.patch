@@ -1,20 +1,30 @@
 diff --git a/app/build.gradle b/app/build.gradle
-index c7e643e..37ad6f1 100644
+index c7e643e..a0f7e32 100644
 --- a/app/build.gradle
 +++ b/app/build.gradle
-@@ -22,7 +22,10 @@ static def releaseTime() {
+@@ -21,12 +21,18 @@ static def releaseTime() {
+ }
  
  def name = "legado"
- def version = "3." + releaseTime()
+-def version = "3." + releaseTime()
 -def versionCodeValue = 30000
++// 定制版：可用 -PversionName 显式指定（默认 3.yyMMddHH，精度只到小时，同小时内多次打包会重名）
++def version = project.findProperty("versionName")?.toString() ?: ("3." + releaseTime())
 +// 定制版说明: 仓库为浅克隆, 拿不到基线 commit 因此 rev-list 计算会失败
 +// 官方原版发布包 versionCode=37456, 这里给定更高值保证升级方向正确;
 +// 也可在命令行用 -PversionCode=xxxxx 覆盖
-+def versionCodeValue = project.findProperty("versionCode")?.toString()?.toInteger() ?: 38200
++def explicitVersionCode = project.findProperty("versionCode")?.toString()
++def versionCodeValue = explicitVersionCode?.toInteger() ?: 38200
  // Preserve the published code at this point, then ignore GitHub wrapper merge commits.
  def versionCodeBaseCommit = '9639f027fbc8cfdf57ce136a9e0c98829a235aef'
  def versionCodeAtBase = 37540
-@@ -64,7 +67,9 @@ android {
+-try {
++// 显式指定了 versionCode 就不再用 git 提交数推算，避免覆盖调用方意图
++if (explicitVersionCode == null) try {
+     def gitCount = providers.exec {
+         commandLine 'git', 'rev-list', "${versionCodeBaseCommit}..HEAD", '--count', '--no-merges'
+         ignoreExitValue = true
+@@ -64,7 +70,9 @@ android {
      }
      defaultConfig {
          applicationId "com.legado.app"
@@ -25,7 +35,7 @@ index c7e643e..37ad6f1 100644
          targetSdk 36
          versionCode = versionCodeValue
          versionName version
-@@ -112,9 +117,13 @@ android {
+@@ -112,9 +120,13 @@ android {
              if (project.hasProperty("RELEASE_STORE_FILE")) {
                  signingConfig = signingConfigs.myConfig
              }
@@ -174,6 +184,162 @@ index bf4eaa0..33c0ab4 100644
      const val showLastUpdateTime = "showLastUpdateTime"
      const val showSearchReadRecord = "showSearchReadRecord"
      const val showWaitUpCount = "showWaitUpCount"
+diff --git a/app/src/main/java/io/legado/app/help/update/AppUpdate.kt b/app/src/main/java/io/legado/app/help/update/AppUpdate.kt
+index 8de4bab..968397a 100644
+--- a/app/src/main/java/io/legado/app/help/update/AppUpdate.kt
++++ b/app/src/main/java/io/legado/app/help/update/AppUpdate.kt
+@@ -1,16 +1,29 @@
+ package io.legado.app.help.update
+ 
++import io.legado.app.constant.AppConst
+ import io.legado.app.help.coroutine.Coroutine
+ import kotlinx.coroutines.CoroutineScope
+ 
+ object AppUpdate {
+ 
++    /**
++     * 自建签名打包（applicationId 带 .custom 后缀）时 appVariant 为 UNKNOWN。
++     * 这类包不能去查上游 Release —— 包名与签名都不同，装上去等于换了个 App。
++     */
++    val isCustomBuild: Boolean
++        get() = AppConst.appInfo.appVariant == AppVariant.UNKNOWN
++
+     val gitHubUpdate: AppUpdateInterface by lazy {
+-        AppUpdateGitHub
++        if (isCustomBuild) AppUpdateCustom else AppUpdateGitHub
+     }
+ 
+     fun checkBeta(scope: CoroutineScope): Coroutine<UpdateInfo> =
+-        AppUpdateGitHub.checkBeta(scope)
++        if (isCustomBuild) {
++            // 定制版没有独立测试通道，beta 入口直接查正式更新
++            AppUpdateCustom.check(scope)
++        } else {
++            AppUpdateGitHub.checkBeta(scope)
++        }
+ 
+     data class UpdateInfo(
+         val tagName: String,
+diff --git a/app/src/main/java/io/legado/app/help/update/AppUpdateCustom.kt b/app/src/main/java/io/legado/app/help/update/AppUpdateCustom.kt
+new file mode 100644
+index 0000000..24ee491
+--- /dev/null
++++ b/app/src/main/java/io/legado/app/help/update/AppUpdateCustom.kt
+@@ -0,0 +1,114 @@
++package io.legado.app.help.update
++
++import androidx.annotation.Keep
++import io.legado.app.constant.AppConst
++import io.legado.app.exception.NoStackTraceException
++import io.legado.app.help.coroutine.Coroutine
++import io.legado.app.help.http.newCallResponse
++import io.legado.app.help.http.okHttpClient
++import io.legado.app.help.http.text
++import io.legado.app.utils.GSON
++import kotlinx.coroutines.CoroutineScope
++import java.time.OffsetDateTime
++import java.time.format.DateTimeFormatter
++
++/**
++ * 定制版（自建签名）的应用内更新。
++ *
++ * 数据源是本仓库根目录的 updates.json，不依赖 GitHub API（避免匿名限流），
++ * 并按「raw → jsDelivr → fastly」多镜像依次尝试，任一成功即用；raw 排第一保证实时性。
++ *
++ * updates.json 字段：
++ *   versionCode            必填，整数，比较依据
++ *   versionName            展示用版本名
++ *   url                    必填，APK 直链（releases/latest/download/<ASCII 名>.apk）
++ *   backupUrl/mirrorUrl/alternateMirrorUrl  可选备用/镜像链接
++ *   size/sha256/notes/pubDate               可选
++ */
++@Keep
++@Suppress("unused")
++object AppUpdateCustom : AppUpdate.AppUpdateInterface {
++
++    private const val REPO = "byl669/legado-lyrics-overlay"
++    private const val BRANCH = "master"
++
++    private val manifestUrls = arrayOf(
++        "https://raw.githubusercontent.com/$REPO/$BRANCH/updates.json",
++        "https://cdn.jsdelivr.net/gh/$REPO@$BRANCH/updates.json",
++        "https://fastly.jsdelivr.net/gh/$REPO@$BRANCH/updates.json",
++    )
++
++    @Keep
++    data class Manifest(
++        val versionCode: Int = 0,
++        val versionName: String = "",
++        val url: String = "",
++        val backupUrl: String? = null,
++        val mirrorUrl: String? = null,
++        val alternateMirrorUrl: String? = null,
++        val size: Long = 0L,
++        val sha256: String? = null,
++        val notes: String = "",
++        val pubDate: String? = null,
++    )
++
++    private suspend fun fetchManifest(): Manifest {
++        var lastError = "无可用镜像"
++        for (mirror in manifestUrls) {
++            try {
++                val res = okHttpClient.newCallResponse {
++                    url(mirror)
++                }
++                if (!res.isSuccessful) {
++                    lastError = "更新服务器返回 ${res.code}"
++                    res.close()
++                    continue
++                }
++                val body = res.body.text()
++                res.close()
++                if (body.isBlank()) {
++                    lastError = "更新清单为空"
++                    continue
++                }
++                val manifest = runCatching {
++                    GSON.fromJson(body, Manifest::class.java)
++                }.getOrNull()
++                if (manifest != null && manifest.versionCode > 0 && manifest.url.isNotBlank()) {
++                    return manifest
++                }
++                lastError = "更新清单格式错误"
++            } catch (e: Exception) {
++                lastError = e.localizedMessage ?: e.javaClass.simpleName
++            }
++        }
++        // 明确失败，绝不静默误报「已是最新」
++        throw NoStackTraceException("检查更新失败：$lastError")
++    }
++
++    private fun parseTime(text: String?): Long {
++        if (text.isNullOrBlank()) return 0L
++        return runCatching {
++            OffsetDateTime.parse(text, DateTimeFormatter.ISO_DATE_TIME).toInstant().toEpochMilli()
++        }.getOrDefault(0L)
++    }
++
++    override fun check(scope: CoroutineScope): Coroutine<AppUpdate.UpdateInfo> {
++        return Coroutine.async(scope) {
++            val manifest = fetchManifest()
++            if (manifest.versionCode <= AppConst.appInfo.versionCode) {
++                throw NoStackTraceException("已是最新版本")
++            }
++            AppUpdate.UpdateInfo(
++                tagName = manifest.versionName.ifBlank { "v${manifest.versionCode}" },
++                updateLog = manifest.notes.ifBlank { "更新内容见发布页" },
++                downloadUrl = manifest.url,
++                fileName = manifest.url.substringAfterLast('/').ifBlank { "legado-custom.apk" },
++                backupDownloadUrl = manifest.backupUrl,
++                mirrorDownloadUrl = manifest.mirrorUrl,
++                alternateMirrorDownloadUrl = manifest.alternateMirrorUrl,
++                size = manifest.size,
++                createdAt = parseTime(manifest.pubDate),
++            )
++        }.timeout(20000)
++    }
++}
 diff --git a/app/src/main/java/io/legado/app/service/BaseReadAloudService.kt b/app/src/main/java/io/legado/app/service/BaseReadAloudService.kt
 index 25b279e..0c99b29 100644
 --- a/app/src/main/java/io/legado/app/service/BaseReadAloudService.kt
@@ -1377,6 +1543,19 @@ index 0000000..0b5477f
 +    <!-- 默认与正文同色: 逐字推进只体现为明暗变化, 不出现突兀的换色 -->
 +    <color name="read_aloud_lyrics_default_highlight">#FFFFFFFF</color>
 +</resources>
+diff --git a/app/src/main/res/values/non_translat.xml b/app/src/main/res/values/non_translat.xml
+index 9c441dc..4b6b252 100644
+--- a/app/src/main/res/values/non_translat.xml
++++ b/app/src/main/res/values/non_translat.xml
+@@ -4,7 +4,7 @@
+     <string name="legado_gzh" translatable="false">开源阅读</string>
+     <string name="email" translatable="false">gekunfei@live.com</string>
+ 
+-    <string name="contributors_url" translatable="false">https://github.com/LegadoTeam/legado/graphs/contributors</string>
++    <string name="contributors_url" translatable="false">https://github.com/byl669/legado-lyrics-overlay</string>
+ 
+     <string name="http_ip" translatable="false">http://%1$s:%2$d</string>
+     <string name="git_hub" translatable="false">GitHub</string>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
 index c467296..e7e1716 100644
 --- a/app/src/main/res/values/strings.xml
@@ -1529,3 +1708,684 @@ index 0000000..589e5b9
 +        app:iconSpaceReserved="false" />
 +
 +</androidx.preference.PreferenceScreen>
+diff --git a/modules/web/src/assets/oled.css b/modules/web/src/assets/oled.css
+new file mode 100644
+index 0000000..3569a64
+--- /dev/null
++++ b/modules/web/src/assets/oled.css
+@@ -0,0 +1,42 @@
++/*
++ * OLED 纯黑主题：在 element-plus 暗色变量基础上再压到真黑，
++ * 并整体提亮文字，解决「默认暗色太灰、白天看不清」的问题。
++ */
++html.oled.dark {
++  color-scheme: dark;
++
++  --el-bg-color: #000000;
++  --el-bg-color-page: #000000;
++  --el-bg-color-overlay: #0a0a0a;
++
++  --el-fill-color: #101010;
++  --el-fill-color-light: #161616;
++  --el-fill-color-lighter: #1b1b1b;
++  --el-fill-color-extra-light: #202020;
++  --el-fill-color-dark: #0c0c0c;
++  --el-fill-color-darker: #080808;
++  --el-fill-color-blank: #000000;
++
++  --el-text-color-primary: #f2f2f2;
++  --el-text-color-regular: #dcdcdc;
++  --el-text-color-secondary: #adadad;
++  --el-text-color-placeholder: #7d7d7d;
++  --el-text-color-disabled: #5a5a5a;
++
++  --el-border-color: #2a2a2a;
++  --el-border-color-light: #242424;
++  --el-border-color-lighter: #1e1e1e;
++  --el-border-color-extra-light: #181818;
++  --el-border-color-dark: #333333;
++  --el-border-color-darker: #3a3a3a;
++
++  --el-box-shadow: 0 12px 32px 4px rgba(0, 0, 0, 0.6);
++  --el-box-shadow-light: 0 0 12px rgba(0, 0, 0, 0.7);
++  --el-box-shadow-lighter: 0 0 8px rgba(0, 0, 0, 0.6);
++  --el-box-shadow-dark: 0 16px 48px 16px rgba(0, 0, 0, 0.8);
++}
++
++html.oled,
++html.oled body {
++  background: #000000 !important;
++}
+diff --git a/modules/web/src/components/BookItems.vue b/modules/web/src/components/BookItems.vue
+index 546d736..7c8bd17 100644
+--- a/modules/web/src/components/BookItems.vue
++++ b/modules/web/src/components/BookItems.vue
+@@ -120,7 +120,7 @@ const subJustify = computed(() =>
+           width: fit-content;
+           font-size: 16px;
+           font-weight: 700;
+-          color: #33373d;
++          color: var(--el-text-color-primary);
+         }
+ 
+         .sub {
+@@ -130,7 +130,7 @@ const subJustify = computed(() =>
+           justify-content: v-bind('subJustify');
+           font-size: 12px;
+           font-weight: 600;
+-          color: #6b6b6b;
++          color: var(--el-text-color-regular);
+           .tags {
+             :deep(.el-tag) {
+               margin-right: 0.5em;
+@@ -147,7 +147,7 @@ const subJustify = computed(() =>
+         .intro,
+         .dur-chapter,
+         .last-chapter {
+-          color: #969ba3;
++          color: var(--el-text-color-secondary);
+           font-size: 13px;
+           margin-top: 3px;
+           font-weight: 500;
+@@ -164,7 +164,7 @@ const subJustify = computed(() =>
+     }
+ 
+     .book:hover {
+-      background: rgba(0, 0, 0, 0.1);
++      background: var(--el-fill-color-light);
+       transition-duration: 0.5s;
+     }
+   }
+@@ -193,4 +193,5 @@ const subJustify = computed(() =>
+     }
+   }
+ }
++
+ </style>
+diff --git a/modules/web/src/components/PopCatalog.vue b/modules/web/src/components/PopCatalog.vue
+index 78f6979..04fbaea 100644
+--- a/modules/web/src/components/PopCatalog.vue
++++ b/modules/web/src/components/PopCatalog.vue
+@@ -6,7 +6,7 @@
+     <div class="title">目录</div>
+     <virtual-list
+       style="height: 300px; overflow: auto"
+-      :class="{ night: isNight, day: !isNight }"
++      :class="{ night: isNight, day: !isNight, oled: isOled }"
+       ref="virtualListRef"
+       data-key="index"
+       wrap-class="data-wrapper"
+@@ -31,7 +31,8 @@ const store = useBookStore()
+ const { catalog, popCataVisible, miniInterface } = storeToRefs(store)
+ 
+ //主题
+-const isNight = computed(() => store.theme)
++const isNight = computed(() => store.isNight)
++const isOled = computed(() => store.isOled)
+ const theme = computed(() => store.theme)
+ const popupTheme = computed(() => {
+   return {
+@@ -122,8 +123,18 @@ const gotoChapter = (chapter: BookChapter) => {
+   }
+ 
+   .night {
++    color: #dddddd;
++
++    :deep(.cata) {
++      border-bottom: 1px solid #333;
++    }
++  }
++
++  .night.oled {
++    color: #efefef;
++
+     :deep(.cata) {
+-      border-bottom: 1px solid #666;
++      border-bottom: 1px solid #1f1f1f;
+     }
+   }
+ 
+diff --git a/modules/web/src/components/ReadSettings.vue b/modules/web/src/components/ReadSettings.vue
+index 52e4f46..9a43d89 100644
+--- a/modules/web/src/components/ReadSettings.vue
++++ b/modules/web/src/components/ReadSettings.vue
+@@ -2,7 +2,7 @@
+   <div
+     class="settings-wrapper"
+     :style="popupTheme"
+-    :class="{ night: isNight, day: !isNight }"
++    :class="{ night: isNight, day: !isNight, oled: isOled }"
+   >
+     <div class="settings-title">设置</div>
+     <div class="setting-list">
+@@ -16,11 +16,29 @@
+             :style="themeColor"
+             ref="themes"
+             @click="setTheme(index)"
+-            :class="{ selected: theme == index }"
++            :class="{ selected: theme == index, 'oled-item': index == 7 }"
++            :title="index == 7 ? 'OLED 纯黑' : ''"
+             ><em v-if="index < 6" class="iconfont">&#58980;</em
+             ><em v-else class="moon-icon">{{ moonIcon }}</em></span
+           >
+         </li>
++        <li class="text-color-list">
++          <i>文字颜色</i>
++          <span
++            class="text-color-item"
++            v-for="(color, index) in textColorPresets"
++            :key="index"
++            :class="{ selected: currentTextColor === color.value }"
++            :title="color.name"
++            @click="setTextColor(color.value)"
++          >
++            <em
++              class="color-dot"
++              :style="{ background: resolveTextColor({ theme, textColor: color.value }) }"
++            ></em>
++            <span class="color-name">{{ color.name }}</span>
++          </span>
++        </li>
+         <li class="font-list">
+           <i>正文字体</i>
+           <span
+@@ -174,7 +192,8 @@
+ <script setup lang="ts">
+ import '../assets/fonts/popfont.css'
+ import '../assets/fonts/iconfont.css'
+-import settings from '../config/themeConfig'
++import settings, { textColorPresets } from '../config/themeConfig'
++import { resolveTextColor } from '@/utils/readerTheme'
+ import API from '@api'
+ import { useDebounceFn } from '@vueuse/shared'
+ 
+@@ -197,6 +216,7 @@ watch(
+ //主题颜色
+ const theme = computed(() => store.theme)
+ const isNight = computed(() => store.isNight)
++const isOled = computed(() => store.isOled)
+ const moonIcon = computed(() => (theme.value == 6 ? '' : ''))
+ const themeColors = [
+   {
+@@ -220,6 +240,9 @@ const themeColors = [
+   {
+     background: 'rgba(0, 0, 0, 0.5)',
+   },
++  {
++    background: '#000000',
++  },
+ ]
+ const popupTheme = computed(() => {
+   return {
+@@ -230,6 +253,12 @@ const setTheme = (theme: number) => {
+   store.config.theme = theme
+ }
+ 
++//正文文字颜色
++const currentTextColor = computed(() => store.config.textColor || '')
++const setTextColor = (color: string) => {
++  store.config.textColor = color
++}
++
+ //预置字体
+ const fonts = ref(['雅黑', '宋体', '楷书'])
+ const setFont = (font: number) => {
+@@ -435,6 +464,7 @@ const setInfiniteLoading = (loading: boolean) => {
+       }
+ 
+       .font-list,
++      .text-color-list,
+       .infinite-loading {
+         margin-top: 28px;
+ 
+@@ -471,6 +501,45 @@ const setInfiniteLoading = (loading: boolean) => {
+         }
+       }
+ 
++      .text-color-list {
++        .text-color-item {
++          display: inline-flex;
++          align-items: center;
++          gap: 6px;
++          height: 34px;
++          padding: 0 11px;
++          margin: 0 8px 8px 0;
++          border: 1px solid transparent;
++          border-radius: 2px;
++          cursor: pointer;
++          font-size: 13px;
++          vertical-align: middle;
++
++          .color-dot {
++            width: 15px;
++            height: 15px;
++            flex: 0 0 auto;
++            border-radius: 50%;
++            border: 1px solid rgba(0, 0, 0, 0.25);
++            font-style: normal;
++          }
++
++          .color-name {
++            line-height: 1;
++            white-space: nowrap;
++          }
++
++          &.selected {
++            color: #ed4259;
++            border-color: #ed4259;
++          }
++
++          &:hover {
++            border-color: #ed4259;
++          }
++        }
++      }
++
+       .font-size,
+       .read-width,
+       .letter-spacing,
+@@ -522,6 +591,10 @@ const setInfiniteLoading = (loading: boolean) => {
+ }
+ 
+ .night {
++  .setting-list ul li i {
++    color: #b2b2b2;
++  }
++
+   :deep(.theme-item) {
+     border: 1px solid #666;
+   }
+@@ -551,6 +624,26 @@ const setInfiniteLoading = (loading: boolean) => {
+       border-right: 1px solid #666;
+     }
+   }
++
++  .text-color-item:not(.selected) {
++    border-color: #333;
++    color: #d8d8d8;
++
++    .color-dot {
++      border-color: rgba(255, 255, 255, 0.28);
++    }
++  }
++}
++
++.oled {
++  .setting-list ul li i {
++    color: #c4c4c4;
++  }
++
++  .text-color-item:not(.selected) {
++    border-color: #262626;
++    color: #ebebeb;
++  }
+ }
+ 
+ .day {
+diff --git a/modules/web/src/config/themeConfig.ts b/modules/web/src/config/themeConfig.ts
+index 996630f..3fe1e7a 100644
+--- a/modules/web/src/config/themeConfig.ts
++++ b/modules/web/src/config/themeConfig.ts
+@@ -16,6 +16,25 @@ import popup_5 from '../assets/imgs/themes/popup_5.png'
+ import body_6 from '../assets/imgs/themes/body_6.png'
+ import content_6 from '../assets/imgs/themes/content_6.png'
+ import popup_6 from '../assets/imgs/themes/popup_6.png'
++/** 夜间主题：6 = 原图纹深色，7 = OLED 纯黑 */
++export const NIGHT_THEMES = [6, 7]
++export const OLED_THEME = 7
++
++/** 阅读正文默认颜色（未手动指定时） */
++export const defaultNightTextColor = '#E8E2D6'
++export const defaultDayTextColor = '#262626'
++
++/** 预设文字颜色，均针对黑底做过可读性挑选 */
++export const textColorPresets = [
++  { name: '自动', value: '' },
++  { name: '纯白', value: '#FFFFFF' },
++  { name: '米白', value: '#E8E2D6' },
++  { name: '暖灰', value: '#CFC9BE' },
++  { name: '浅灰', value: '#B4B4B4' },
++  { name: '奶咖', value: '#E0C9A8' },
++  { name: '淡青', value: '#B6D2C2' },
++]
++
+ const settings = {
+   themes: [
+     {
+@@ -53,6 +72,12 @@ const settings = {
+       content: '#ede7da url(' + content_6 + ') repeat',
+       popup: '#ede7da url(' + popup_6 + ') repeat',
+     },
++    {
++      // OLED 纯黑：正文纯黑省电，浮层留一点点差异方便看清边界
++      body: '#000000',
++      content: '#000000',
++      popup: '#0a0a0a',
++    },
+   ],
+   fonts: [
+     'Microsoft YaHei, PingFangSC-Regular, HelveticaNeue-Light, Helvetica Neue Light, sans-serif',
+diff --git a/modules/web/src/main.ts b/modules/web/src/main.ts
+index 52a36f5..c4bd146 100644
+--- a/modules/web/src/main.ts
++++ b/modules/web/src/main.ts
+@@ -3,18 +3,15 @@ import App from './App.vue'
+ import router from '@/router'
+ import store from '@/store'
+ import 'element-plus/theme-chalk/dark/css-vars.css'
++import '@/assets/oled.css'
++import { syncDocumentTheme } from '@/utils/readerTheme'
+ 
+ createApp(App).use(store).use(router).mount('#app')
+-// 书架 同步Element PLUS 夜间模式
++// 书架 同步Element PLUS 夜间模式 & OLED 纯黑
+ watch(
+-  () => useBookStore().isNight,
+-  isNight => {
+-    if (isNight) {
+-      document.documentElement.classList.add('dark')
+-    } else {
+-      document.documentElement.classList.remove('dark')
+-    }
+-  },
++  () => useBookStore().config.theme,
++  theme => syncDocumentTheme(theme),
++  { immediate: true },
+ )
+ 
+ window.addEventListener('vite:preloadError', event => {
+diff --git a/modules/web/src/pages/bookshelf/main.js b/modules/web/src/pages/bookshelf/main.js
+index 45622d1..4468684 100644
+--- a/modules/web/src/pages/bookshelf/main.js
++++ b/modules/web/src/pages/bookshelf/main.js
+@@ -3,17 +3,14 @@ import App from '@/App.vue'
+ import bookRouter from '@/router/bookRouter'
+ import store from '@/store'
+ import 'element-plus/theme-chalk/dark/css-vars.css'
++import '@/assets/oled.css'
++import { syncDocumentTheme } from '@/utils/readerTheme'
+ 
+ createApp(App).use(store).use(bookRouter).mount('#app')
+ 
+-// 同步Element PLUS 夜间模式
++// 同步Element PLUS 夜间模式 & OLED 纯黑
+ watch(
+-  () => useBookStore().isNight,
+-  isNight => {
+-    if (isNight) {
+-      document.documentElement.classList.add('dark')
+-    } else {
+-      document.documentElement.classList.remove('dark')
+-    }
+-  },
++  () => useBookStore().config.theme,
++  theme => syncDocumentTheme(theme),
++  { immediate: true },
+ )
+diff --git a/modules/web/src/store/bookStore.ts b/modules/web/src/store/bookStore.ts
+index 0b7a139..b0bc6a6 100644
+--- a/modules/web/src/store/bookStore.ts
++++ b/modules/web/src/store/bookStore.ts
+@@ -9,9 +9,11 @@ import type {
+ } from '@/book'
+ import type { webReadConfig } from '@/web'
+ import { ElMessage } from 'element-plus/es'
++import { isNightTheme, isOledTheme, resolveTextColor } from '@/utils/readerTheme'
+ 
+ const default_config: webReadConfig = {
+   theme: 0,
++  textColor: '',
+   font: 0,
+   fontSize: 18,
+   readWidth: 800,
+@@ -63,7 +65,9 @@ export const useBookStore = defineStore('book', {
+     theme: state => {
+       return state.config.theme
+     },
+-    isNight: state => state.config.theme == 6,
++    isNight: state => isNightTheme(state.config.theme),
++    isOled: state => isOledTheme(state.config.theme),
++    textColor: state => resolveTextColor(state.config),
+   },
+   actions: {
+     /** 从后端加载书架书籍，优先返回内存缓存 */
+diff --git a/modules/web/src/utils/readerTheme.ts b/modules/web/src/utils/readerTheme.ts
+new file mode 100644
+index 0000000..5bcf19c
+--- /dev/null
++++ b/modules/web/src/utils/readerTheme.ts
+@@ -0,0 +1,32 @@
++import type { webReadConfig } from '@/web'
++import {
++  NIGHT_THEMES,
++  OLED_THEME,
++  defaultDayTextColor,
++  defaultNightTextColor,
++} from '@/config/themeConfig'
++
++export const isNightTheme = (theme: number | undefined) =>
++  NIGHT_THEMES.includes(theme ?? -1)
++
++export const isOledTheme = (theme: number | undefined) => theme === OLED_THEME
++
++/** 正文颜色：用户指定优先，否则按明暗主题给默认值 */
++export const resolveTextColor = (
++  config: Pick<webReadConfig, 'theme' | 'textColor'>,
++) => {
++  const custom = (config.textColor || '').trim()
++  if (custom) return custom
++  return isNightTheme(config.theme) ? defaultNightTextColor : defaultDayTextColor
++}
++
++/**
++ * 同步 html 根节点上的主题类名：
++ * - dark：element-plus 组件暗色变量
++ * - oled：纯黑背景时把面板/弹层压到 #000，并提亮正文与次级文字
++ */
++export const syncDocumentTheme = (theme: number | undefined) => {
++  const root = document.documentElement
++  root.classList.toggle('dark', isNightTheme(theme))
++  root.classList.toggle('oled', isOledTheme(theme))
++}
+diff --git a/modules/web/src/views/BookChapter.vue b/modules/web/src/views/BookChapter.vue
+index 7393ab9..508dc37 100644
+--- a/modules/web/src/views/BookChapter.vue
++++ b/modules/web/src/views/BookChapter.vue
+@@ -2,7 +2,7 @@
+   <div
+     class="chapter-wrapper"
+     :style="bodyTheme"
+-    :class="{ night: isNight, day: !isNight }"
++    :class="{ night: isNight, day: !isNight, oled: isOled }"
+     @click="showToolBar = !showToolBar"
+   >
+     <div class="tool-bar" :style="leftBarTheme">
+@@ -122,6 +122,7 @@ import API from '@api'
+ import { useLoading } from '@/hooks/loading'
+ import { useThrottleFn } from '@vueuse/shared'
+ import { isNullOrBlank } from '@/utils/utils'
++import { resolveTextColor } from '@/utils/readerTheme'
+ import { trimChapterWindowBeforeAppend } from '@/utils/chapterWindow'
+ import ReviewDialog from '@/components/ReviewDialog.vue'
+ import LegacyReviewDialog from '@/components/LegacyReviewDialog.vue'
+@@ -143,6 +144,7 @@ const {
+   bookProgress,
+   theme,
+   isNight,
++  isOled,
+ } = storeToRefs(store)
+ 
+ const chapterPos = computed({
+@@ -243,6 +245,7 @@ const chapterTheme = computed(() => {
+   return {
+     background: chapterColor.value,
+     width: readWidth.value,
++    color: resolveTextColor(store.config),
+   }
+ })
+ const showToolBar = ref(false)
+@@ -862,18 +865,18 @@ onBeforeRouteLeave(async (to, from, next) => {
+   }
+ 
+   :deep(.tool-icon) {
+-    border: 1px solid #444;
++    border: 1px solid #3a3a3a;
+     margin-top: -1px;
+-    color: #666;
++    color: #d2d2d2;
+ 
+     .icon-text {
+-      color: #666;
++      color: #a4a4a4;
+     }
+   }
+ 
+   :deep(.chapter) {
+-    border: 1px solid #444;
+-    color: #666;
++    border: 1px solid #3a3a3a;
++    color: #e8e2d6;
+   }
+ 
+   :deep(.popper__arrow) {
+@@ -881,6 +884,28 @@ onBeforeRouteLeave(async (to, from, next) => {
+   }
+ }
+ 
++/* OLED 纯黑：去掉多余的灰色描边，让文字对比最大化 */
++.oled {
++  :deep(.popup) {
++    box-shadow:
++      0 0 0 1px #1f1f1f,
++      0 4px 16px rgba(0, 0, 0, 0.9);
++  }
++
++  :deep(.tool-icon) {
++    border-color: #232323;
++    color: #e6e6e6;
++
++    .icon-text {
++      color: #b3b3b3;
++    }
++  }
++
++  :deep(.chapter) {
++    border-color: #151515;
++  }
++}
++
+ @media screen and (max-width: 776px) {
+   .chapter-wrapper {
+     padding: 0;
+diff --git a/modules/web/src/views/BookShelf.vue b/modules/web/src/views/BookShelf.vue
+index b468079..b71b553 100644
+--- a/modules/web/src/views/BookShelf.vue
++++ b/modules/web/src/views/BookShelf.vue
+@@ -1,5 +1,12 @@
+ <template>
+-  <div :class="{ 'index-wrapper': true, night: isNight, day: !isNight }">
++  <div
++    :class="{
++      'index-wrapper': true,
++      night: isNight,
++      day: !isNight,
++      oled: isOled,
++    }"
++  >
+     <div class="navigation-wrapper">
+       <div class="navigation-title-wrapper">
+         <div class="navigation-title">阅读</div>
+@@ -98,6 +105,7 @@ import type { webReadConfig } from '@/web'
+ 
+ const store = useBookStore()
+ const isNight = computed(() => store.isNight)
++const isOled = computed(() => store.isOled)
+ 
+ /** shortcuts of `store.setConfig` */
+ const applyReadConfig = (config?: webReadConfig) => {
+@@ -467,20 +475,27 @@ onMounted(() => {
+ 
+ .night {
+   .navigation-wrapper {
+-    background-color: #454545;
++    background-color: #2b2b2b;
+ 
+     .navigation-title {
+-      color: #aeaeae;
++      color: #ececec;
++    }
++
++    .navigation-sub-title,
++    .recent-title,
++    .setting-title {
++      color: #a9a9a9;
+     }
+ 
+     .search-wrapper {
+       .search-input {
+-        .el-input__wrapper {
+-          background-color: #454545;
++        :deep(.el-input__wrapper) {
++          background-color: #3a3a3a;
++          box-shadow: 0 0 0 1px #4a4a4a inset;
+         }
+ 
+-        .el-input__inner {
+-          color: #b1b1b1;
++        :deep(.el-input__inner) {
++          color: #e4e4e4;
+         }
+       }
+     }
+@@ -490,4 +505,39 @@ onMounted(() => {
+     background-color: #161819;
+   }
+ }
++
++/* OLED 纯黑：整页压到真黑，仅用 1px 分隔线区分区域 */
++.night.oled {
++  .navigation-wrapper {
++    background-color: #000000;
++    border-right: 1px solid #1c1c1c;
++
++    .navigation-title {
++      color: #f5f5f5;
++    }
++
++    .navigation-sub-title,
++    .recent-title,
++    .setting-title {
++      color: #8f8f8f;
++    }
++
++    .search-wrapper {
++      .search-input {
++        :deep(.el-input__wrapper) {
++          background-color: #0d0d0d;
++          box-shadow: 0 0 0 1px #262626 inset;
++        }
++
++        :deep(.el-input__inner) {
++          color: #f0f0f0;
++        }
++      }
++    }
++  }
++
++  :deep(.shelf-wrapper) {
++    background-color: #000000;
++  }
++}
+ </style>
+diff --git a/modules/web/src/web.d.ts b/modules/web/src/web.d.ts
+index 75a614a..6c08339 100644
+--- a/modules/web/src/web.d.ts
++++ b/modules/web/src/web.d.ts
+@@ -1,5 +1,7 @@
+ export type webReadConfig = {
+   theme: number
++  /** 正文文字颜色，空字符串表示按主题自动选择 */
++  textColor: string
+   font: number
+   fontSize: number
+   readWidth: number

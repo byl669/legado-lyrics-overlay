@@ -16,6 +16,25 @@ import popup_5 from '../assets/imgs/themes/popup_5.png'
 import body_6 from '../assets/imgs/themes/body_6.png'
 import content_6 from '../assets/imgs/themes/content_6.png'
 import popup_6 from '../assets/imgs/themes/popup_6.png'
+/** 夜间主题：6 = 原图纹深色，7 = OLED 纯黑 */
+export const NIGHT_THEMES = [6, 7]
+export const OLED_THEME = 7
+
+/** 阅读正文默认颜色（未手动指定时） */
+export const defaultNightTextColor = '#E8E2D6'
+export const defaultDayTextColor = '#262626'
+
+/** 预设文字颜色，均针对黑底做过可读性挑选 */
+export const textColorPresets = [
+  { name: '自动', value: '' },
+  { name: '纯白', value: '#FFFFFF' },
+  { name: '米白', value: '#E8E2D6' },
+  { name: '暖灰', value: '#CFC9BE' },
+  { name: '浅灰', value: '#B4B4B4' },
+  { name: '奶咖', value: '#E0C9A8' },
+  { name: '淡青', value: '#B6D2C2' },
+]
+
 const settings = {
   themes: [
     {
@@ -52,6 +71,12 @@ const settings = {
       body: '#ede7da url(' + body_6 + ') repeat',
       content: '#ede7da url(' + content_6 + ') repeat',
       popup: '#ede7da url(' + popup_6 + ') repeat',
+    },
+    {
+      // OLED 纯黑：正文纯黑省电，浮层留一点点差异方便看清边界
+      body: '#000000',
+      content: '#000000',
+      popup: '#0a0a0a',
     },
   ],
   fonts: [

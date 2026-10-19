@@ -9,9 +9,11 @@ import type {
 } from '@/book'
 import type { webReadConfig } from '@/web'
 import { ElMessage } from 'element-plus/es'
+import { isNightTheme, isOledTheme, resolveTextColor } from '@/utils/readerTheme'
 
 const default_config: webReadConfig = {
   theme: 0,
+  textColor: '',
   font: 0,
   fontSize: 18,
   readWidth: 800,
@@ -63,7 +65,9 @@ export const useBookStore = defineStore('book', {
     theme: state => {
       return state.config.theme
     },
-    isNight: state => state.config.theme == 6,
+    isNight: state => isNightTheme(state.config.theme),
+    isOled: state => isOledTheme(state.config.theme),
+    textColor: state => resolveTextColor(state.config),
   },
   actions: {
     /** 从后端加载书架书籍，优先返回内存缓存 */

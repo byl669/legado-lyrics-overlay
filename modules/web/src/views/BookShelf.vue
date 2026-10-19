@@ -1,5 +1,12 @@
 <template>
-  <div :class="{ 'index-wrapper': true, night: isNight, day: !isNight }">
+  <div
+    :class="{
+      'index-wrapper': true,
+      night: isNight,
+      day: !isNight,
+      oled: isOled,
+    }"
+  >
     <div class="navigation-wrapper">
       <div class="navigation-title-wrapper">
         <div class="navigation-title">阅读</div>
@@ -98,6 +105,7 @@ import type { webReadConfig } from '@/web'
 
 const store = useBookStore()
 const isNight = computed(() => store.isNight)
+const isOled = computed(() => store.isOled)
 
 /** shortcuts of `store.setConfig` */
 const applyReadConfig = (config?: webReadConfig) => {
@@ -467,20 +475,27 @@ onMounted(() => {
 
 .night {
   .navigation-wrapper {
-    background-color: #454545;
+    background-color: #2b2b2b;
 
     .navigation-title {
-      color: #aeaeae;
+      color: #ececec;
+    }
+
+    .navigation-sub-title,
+    .recent-title,
+    .setting-title {
+      color: #a9a9a9;
     }
 
     .search-wrapper {
       .search-input {
-        .el-input__wrapper {
-          background-color: #454545;
+        :deep(.el-input__wrapper) {
+          background-color: #3a3a3a;
+          box-shadow: 0 0 0 1px #4a4a4a inset;
         }
 
-        .el-input__inner {
-          color: #b1b1b1;
+        :deep(.el-input__inner) {
+          color: #e4e4e4;
         }
       }
     }
@@ -488,6 +503,41 @@ onMounted(() => {
 
   :deep(.shelf-wrapper) {
     background-color: #161819;
+  }
+}
+
+/* OLED 纯黑：整页压到真黑，仅用 1px 分隔线区分区域 */
+.night.oled {
+  .navigation-wrapper {
+    background-color: #000000;
+    border-right: 1px solid #1c1c1c;
+
+    .navigation-title {
+      color: #f5f5f5;
+    }
+
+    .navigation-sub-title,
+    .recent-title,
+    .setting-title {
+      color: #8f8f8f;
+    }
+
+    .search-wrapper {
+      .search-input {
+        :deep(.el-input__wrapper) {
+          background-color: #0d0d0d;
+          box-shadow: 0 0 0 1px #262626 inset;
+        }
+
+        :deep(.el-input__inner) {
+          color: #f0f0f0;
+        }
+      }
+    }
+  }
+
+  :deep(.shelf-wrapper) {
+    background-color: #000000;
   }
 }
 </style>

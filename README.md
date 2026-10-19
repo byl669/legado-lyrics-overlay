@@ -18,6 +18,10 @@
 - **熄屏省电**：熄屏自动隐藏并停止刷新，亮屏恢复
 - **文字恒不透明**：透明度只作用于背景，保证任何壁纸上文字清晰
 - 外观可配置：字号 / 文字色 / 已读进度色 / 背景透明度 / 上下句开关 / 按钮开关
+- **网页端 OLED 纯黑主题**：设置里第 8 个主题 = 正文与页面真黑 `#000000`，另提供 7 档文字颜色
+  （自动 / 纯白 / 米白 / 暖灰 / 浅灰 / 奶咖 / 淡青），解决原版夜间 `#666` 灰字在白天看不清的问题
+- **应用内更新**：检查更新读本仓库根目录 [`updates.json`](updates.json)（raw → jsDelivr → fastly 多镜像），
+  按 `versionCode` 比较，弹窗内直接下载升级 —— 不再误指向上游 Release
 - 共存设计：包名 `com.legado.app.custom`，应用名「阅读·歌词版」，可与官方原版同装一台设备
 
 ## 构建
@@ -32,8 +36,8 @@
 #    RELEASE_KEY_ALIAS=xxx
 #    RELEASE_KEY_PASSWORD=xxx
 
-# 3. 编译
-./gradlew -PversionCode=38202 :app:assembleRelease
+# 3. 编译（versionCode 每版递增；versionName 建议显式指定，避免同一小时重复）
+./gradlew -PversionCode=38204 -PversionName=3.26101921-r6 :app:assembleRelease
 # 产物: app/build/outputs/apk/app/release/app-app-release.apk
 ```
 
@@ -48,8 +52,20 @@
 | 文档 | 内容 |
 |---|---|
 | [docs/Legado朗读桌面歌词-技术实现文档.md](docs/Legado朗读桌面歌词-技术实现文档.md) | 完整技术方案：架构、挂载点、修改前后对比、上游新版移植指南、回归验证 |
+| [docs/Legado网页端OLED主题-技术实现.md](docs/Legado网页端OLED主题-技术实现.md) | 网页端纯黑主题与文字颜色：根因、变量覆盖、改动清单、验证方法、踩坑 |
+| [docs/应用内更新-发布与维护.md](docs/应用内更新-发布与维护.md) | 应用内更新数据流、`updates.json` 字段、一键发布脚本用法 |
 | [docs/阅读-歌词版-安装与数据迁移指引.md](docs/阅读-歌词版-安装与数据迁移指引.md) | 面向使用者：安装、数据备份迁移、各版本更新记录、FAQ |
-| [patch-lyrics-overlay/](patch-lyrics-overlay/) | 15 文件统一 diff 补丁包（`git apply --3way` 可重放）+ 5 个新增文件快照，用于把本功能移植到上游新版本 |
+| [patch-lyrics-overlay/](patch-lyrics-overlay/) | 统一 diff 补丁包（`git apply --3way` 可重放）+ 新增文件快照，用于把定制内容移植到上游新版本 |
+
+## 发布新版本
+
+```bash
+tools/publish-release.sh --apk <APK路径> --version-code <N> \
+  --version-name <a.b.c-rN> --tag rN --notes-file <说明.md>
+```
+
+脚本会创建 Release、上传 APK、生成并提交 `updates.json`，最后校验三个镜像。
+详见 [docs/应用内更新-发布与维护.md](docs/应用内更新-发布与维护.md)。
 
 ## 移植到上游新版本
 

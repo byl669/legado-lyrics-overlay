@@ -3,17 +3,14 @@ import App from '@/App.vue'
 import bookRouter from '@/router/bookRouter'
 import store from '@/store'
 import 'element-plus/theme-chalk/dark/css-vars.css'
+import '@/assets/oled.css'
+import { syncDocumentTheme } from '@/utils/readerTheme'
 
 createApp(App).use(store).use(bookRouter).mount('#app')
 
-// 同步Element PLUS 夜间模式
+// 同步Element PLUS 夜间模式 & OLED 纯黑
 watch(
-  () => useBookStore().isNight,
-  isNight => {
-    if (isNight) {
-      document.documentElement.classList.add('dark')
-    } else {
-      document.documentElement.classList.remove('dark')
-    }
-  },
+  () => useBookStore().config.theme,
+  theme => syncDocumentTheme(theme),
+  { immediate: true },
 )
