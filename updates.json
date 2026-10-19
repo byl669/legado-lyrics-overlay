@@ -5,8 +5,8 @@
   "backupUrl": "https://github.com/byl669/legado-lyrics-overlay/releases/download/r6/Legado-lyrics-overlay-latest.apk",
   "mirrorUrl": "https://ghfast.top/https://github.com/byl669/legado-lyrics-overlay/releases/latest/download/Legado-lyrics-overlay-latest.apk",
   "alternateMirrorUrl": "https://gh-proxy.com/https://github.com/byl669/legado-lyrics-overlay/releases/latest/download/Legado-lyrics-overlay-latest.apk",
-  "size": 28657105,
-  "sha256": "025bd7eef0c2c60c1abab0265fb277a3248a576ca9f455cd441f5be88b396426",
+  "size": 28673490,
+  "sha256": "682eb9e1e232f77b0b051e9a69c23c09c7a5ad750524417960f088a2157851bc",
   "notes": "## r6 · 网页端 OLED 纯黑主题 + 应用内更新\n\n适用于自建签名的共存版（`com.legado.app.custom`），可直接覆盖安装 r4/r5，数据不丢。\n\n### 新增\n- **网页端「OLED 纯黑」主题**：正文与页面纯黑 `#000000`，浮层 `#0A0A0A` 保留 1px 边界\n- **网页端「文字颜色」**：自动 / 纯白 / 米白 / 暖灰 / 浅灰 / 奶咖 / 淡青，按黑底可读性挑选\n- **应用内更新**：检查更新改读本仓库 `updates.json`（raw → jsDelivr → fastly 多镜像），\n  按 `versionCode` 比较，弹窗内直接下载升级\n\n### 修复\n- 网页端夜间正文写死 `#666`（白天在窗边看不清）→ 提亮为 `#E8E2D6`\n- 网页端书架书名/作者写死浅色，黑底上几乎不可见 → 跟随主题\n- 网页端目录弹窗把主题序号当布尔用，任何主题都被判定为夜间\n- 定制版误查上游 Release（包名与签名都不同，装了等于换 App）→ 已切断\n\n### 参数\n- versionCode `38204` / versionName `3.26101921-r6`\n- minSdk 26 · targetSdk 36",
-  "pubDate": "2026-10-19T21:59:20+08:00"
+  "pubDate": "2026-10-19T22:17:21+08:00"
 }
