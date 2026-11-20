@@ -79,7 +79,7 @@ cd ../..
 rm -rf app/src/main/assets/web/vue && cp -R modules/web/dist app/src/main/assets/web/vue
 
 JAVA_HOME=$HOME/.cmfa-toolchain/jdk ./gradlew \
-  -g /Volumes/512SSD/ExtWorkbuddy/2026-10-07-23-04-57/.gradle-home \
+  -g <你的Gradle用户目录> \
   -PversionCode=<递增> :app:assembleRelease
 ```
 

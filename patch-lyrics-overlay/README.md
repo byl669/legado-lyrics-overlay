@@ -7,16 +7,20 @@
 
 **用途**：上游发布大版本后，把本补丁套到新版源码上，快速重建定制版。
 
-- 生成时间：2026-10-19（r6）
-- 基线 commit：`5198645`（tag `beta`，`fix(cronet): 修复 WebDAV 跨站跳转认证冲突 (#1343)`）
-- 对应产物：`Legado-3.26101921-r6…apk`（`versionCode 38204`）
+- 生成时间：2026-11-20（r7）
+- 基线 commit：`330e606c`（tag `beta`，`fix: 修复段落阅读模式背景未同步的问题 (#1445)`，上游 `3.26110117`）
+- 对应产物：`Legado-3.26112051-r7…apk`（`versionCode 38600`）
+
+> r7 起兼容上游新增的**段落阅读模式**：传统模式的项常为整段文本，段落模式更是整块朗读，
+> 因此统一由 `LyricsSentence` 按句末标点二次切分，超长无标点段落围绕进度开窗显示。
+> r6 及更早基于旧基线 `5198645`（2026-10-04）。
 
 ## 目录
 
 | 路径 | 内容 |
 |---|---|
 | `legado-lyrics-overlay.patch` | 全部源码改动的统一 diff（含新增文件），`git apply` 直接可用 |
-| `new-files/` | 8 个新增文件的独立快照（patch 冲突时直接拷贝覆盖） |
+| `new-files/` | 10 个新增文件的独立快照（patch 冲突时直接拷贝覆盖） |
 
 **不含** `app/src/main/assets/web/vue/**`（前端构建产物）——需在 `modules/web` 下
 `npm install && npx vite build`，再把 `dist` 整目录复制过去（详见 `docs/Legado网页端OLED主题-技术实现.md`）。
@@ -31,7 +35,7 @@ git clone --depth=1 https://github.com/LegadoTeam/legado.git legado-new && cd le
 git apply --3way /path/to/patch-lyrics-overlay/legado-lyrics-overlay.patch
 
 # 3) 若报冲突（strings.xml / build.gradle / PreferKey.kt 最可能冲突）
-#    用 new-files/ 覆盖 8 个新增文件，再按 docs/ 里的「挂载点清单」手工合并修改处
+#    用 new-files/ 覆盖 10 个新增文件，再按 docs/ 里的「挂载点清单」手工合并修改处
 cp -R /path/to/patch-lyrics-overlay/new-files/* .
 
 # 4) 环境：local.properties 指向本机 SDK

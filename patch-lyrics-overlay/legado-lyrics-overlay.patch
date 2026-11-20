@@ -1,5 +1,5 @@
 diff --git a/app/build.gradle b/app/build.gradle
-index c7e643e..a0f7e32 100644
+index eb26ab0..6c7d9ee 100644
 --- a/app/build.gradle
 +++ b/app/build.gradle
 @@ -21,12 +21,18 @@ static def releaseTime() {
@@ -146,10 +146,10 @@ index 71b8373..8de3283 100644
          Coroutine.async {
              LogUtils.init(this@App)
 diff --git a/app/src/main/java/io/legado/app/constant/EventBus.kt b/app/src/main/java/io/legado/app/constant/EventBus.kt
-index cc00523..10ce417 100644
+index f2b86cd..5b0ad30 100644
 --- a/app/src/main/java/io/legado/app/constant/EventBus.kt
 +++ b/app/src/main/java/io/legado/app/constant/EventBus.kt
-@@ -38,6 +38,10 @@ object EventBus {
+@@ -41,6 +41,10 @@ object EventBus {
      const val UPDATE_READ_ACTION_BAR = "updateReadActionBar"
      const val UP_SEEK_BAR = "upSeekBar"
      const val READ_ALOUD_PLAY = "readAloudPlay"
@@ -161,10 +161,10 @@ index cc00523..10ce417 100644
      const val UP_MANGA_CONFIG = "upMangaConfig"
      const val PLAY_MODE_CHANGED = "playModeChanged"
 diff --git a/app/src/main/java/io/legado/app/constant/PreferKey.kt b/app/src/main/java/io/legado/app/constant/PreferKey.kt
-index bf4eaa0..33c0ab4 100644
+index 0d21dca..f6068d9 100644
 --- a/app/src/main/java/io/legado/app/constant/PreferKey.kt
 +++ b/app/src/main/java/io/legado/app/constant/PreferKey.kt
-@@ -214,6 +214,19 @@ object PreferKey {
+@@ -223,6 +223,19 @@ object PreferKey {
      const val webServiceWakeLock = "webServiceWakeLock"
      const val audioPlayWakeLock = "audioPlayWakeLock"
      const val readAloudWakeLock = "readAloudWakeLock"
@@ -183,7 +183,7 @@ index bf4eaa0..33c0ab4 100644
 +    const val readAloudLyricsColorMigrated = "readAloudLyricsColorMigrated"
      const val showLastUpdateTime = "showLastUpdateTime"
      const val showSearchReadRecord = "showSearchReadRecord"
-     const val showWaitUpCount = "showWaitUpCount"
+     const val contentSearchScope = "contentSearchScope"
 diff --git a/app/src/main/java/io/legado/app/help/update/AppUpdate.kt b/app/src/main/java/io/legado/app/help/update/AppUpdate.kt
 index 8de4bab..968397a 100644
 --- a/app/src/main/java/io/legado/app/help/update/AppUpdate.kt
@@ -351,7 +351,7 @@ index 0000000..fbe0843
 +    }
 +}
 diff --git a/app/src/main/java/io/legado/app/service/BaseReadAloudService.kt b/app/src/main/java/io/legado/app/service/BaseReadAloudService.kt
-index 25b279e..0c99b29 100644
+index 8ee89f2..7165d00 100644
 --- a/app/src/main/java/io/legado/app/service/BaseReadAloudService.kt
 +++ b/app/src/main/java/io/legado/app/service/BaseReadAloudService.kt
 @@ -13,7 +13,10 @@ import android.graphics.BitmapFactory
@@ -365,17 +365,20 @@ index 25b279e..0c99b29 100644
  import android.support.v4.media.MediaMetadataCompat
  import android.support.v4.media.session.MediaSessionCompat
  import android.support.v4.media.session.PlaybackStateCompat
-@@ -77,6 +80,9 @@ import splitties.systemservices.powerManager
+@@ -83,6 +86,12 @@ import splitties.systemservices.powerManager
  import splitties.systemservices.telephonyManager
  import splitties.systemservices.wifiManager
  
 +/** 朗读桌面歌词逐字高亮的最小刷新间隔(ms), 防止 TTS 逐字回调把主线程打满 */
 +private const val LYRICS_THROTTLE_MS = 40L
 +
++/** 传统模式下认为「这一项就是一句话」的最大长度, 超过则按句裁剪 */
++private const val TRADITIONAL_MAX_LINE = 120
++
  internal fun shouldRewindReadAloudToSentenceStart(
      rewindToSentenceStart: Boolean,
      toLast: Boolean
-@@ -219,6 +225,17 @@ abstract class BaseReadAloudService : BaseService(),
+@@ -273,6 +282,17 @@ abstract class BaseReadAloudService : BaseService(),
      var readAloudByPage = false
          private set
  
@@ -390,10 +393,10 @@ index 25b279e..0c99b29 100644
 +
 +    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 +
-     private data class PreparedReadAloud(
-         val textChapter: TextChapter,
-         val pageIndex: Int,
-@@ -290,11 +307,35 @@ abstract class BaseReadAloudService : BaseService(),
+     internal var paragraphMode = false
+         private set
+     @Volatile internal var paragraphSession = 0L
+@@ -494,11 +514,35 @@ abstract class BaseReadAloudService : BaseService(),
                  }
              }
          }
@@ -426,10 +429,10 @@ index 25b279e..0c99b29 100644
          readAloudGeneration.incrementAndGet()
          readAloudJob?.cancel()
 +        releaseLyricsWindow()
-         super.onDestroy()
-         restoreReadAloudFollow()
-         updateReadAloudChapterIndex(-1)
-@@ -406,6 +447,11 @@ abstract class BaseReadAloudService : BaseService(),
+         paragraphSession++
+         val wasCurrentService = currentService === this
+         if (wasCurrentService) currentService = null
+@@ -650,6 +694,11 @@ abstract class BaseReadAloudService : BaseService(),
                  BaseReadAloudService.readAloudChapterStart = prepared.readAloudChapterStart
                  this@BaseReadAloudService.paragraphStartPos = prepared.paragraphStartPos
                  if (prepared.consumedToLast) this@BaseReadAloudService.toLast = false
@@ -441,10 +444,12 @@ index 25b279e..0c99b29 100644
                  if (play) play() else pageChanged = true
              }
          }.onError(Main) {
-@@ -428,6 +474,10 @@ abstract class BaseReadAloudService : BaseService(),
+@@ -672,6 +721,12 @@ abstract class BaseReadAloudService : BaseService(),
          upReadAloudNotification()
          upMediaSessionPlaybackState(PlaybackStateCompat.STATE_PLAYING)
          postEvent(EventBus.ALOUD_STATE, Status.PLAY)
++        // 段落阅读模式不经过传统 prepare 路径, 必须在这里兜底创建歌词窗
++        ensureLyricsWindow()
 +        lyricsWindow?.let {
 +            it.updatePlayState(true)
 +            it.attach()
@@ -452,7 +457,7 @@ index 25b279e..0c99b29 100644
      }
  
      abstract fun playStop()
-@@ -445,6 +495,7 @@ abstract class BaseReadAloudService : BaseService(),
+@@ -689,6 +744,7 @@ abstract class BaseReadAloudService : BaseService(),
          upReadAloudNotification()
          upMediaSessionPlaybackState(PlaybackStateCompat.STATE_PAUSED)
          postEvent(EventBus.ALOUD_STATE, Status.PAUSE)
@@ -460,10 +465,11 @@ index 25b279e..0c99b29 100644
          ReadBook.uploadProgress()
          doDs()
      }
-@@ -462,6 +513,10 @@ abstract class BaseReadAloudService : BaseService(),
+@@ -706,6 +762,11 @@ abstract class BaseReadAloudService : BaseService(),
          upReadAloudNotification()
          upMediaSessionPlaybackState(PlaybackStateCompat.STATE_PLAYING)
          postEvent(EventBus.ALOUD_STATE, Status.PLAY)
++        ensureLyricsWindow()
 +        lyricsWindow?.let {
 +            it.updatePlayState(true)
 +            it.attach()
@@ -471,7 +477,7 @@ index 25b279e..0c99b29 100644
      }
  
      abstract fun upSpeechRate(reset: Boolean = false)
-@@ -469,6 +524,59 @@ abstract class BaseReadAloudService : BaseService(),
+@@ -713,6 +774,80 @@ abstract class BaseReadAloudService : BaseService(),
      fun upTtsProgress(progress: Int) {
          readAloudChapterStart = progress
          postEvent(EventBus.TTS_PROGRESS, progress)
@@ -497,6 +503,7 @@ index 25b279e..0c99b29 100644
 +     * 逐字回调频率高, 这里做节流, 避免频繁重排 TextView。
 +     */
 +    private fun publishLyrics(force: Boolean = false) {
++        ensureLyricsWindow()
 +        val window = lyricsWindow ?: return
 +        if (!window.isEnabled()) return
 +        val now = SystemClock.elapsedRealtime()
@@ -511,6 +518,27 @@ index 25b279e..0c99b29 100644
 +
 +    private fun doPublishLyrics(window: ReadAloudLyricsWindow, force: Boolean) {
 +        val index = nowSpeak
++        // readAloudNumber 是当前朗读单元起点, readAloudChapterStart 是移动中的游标, 差值即单元内已读字符数
++        val readInUnit = (readAloudChapterStart - readAloudNumber).coerceAtLeast(0)
++        if (paragraphMode) {
++            // 段落模式的 contentList 每一项是朗读块(TTS 可达数千字, HTTP 直接整段),
++            // 必须按句再切一层, 否则悬浮窗会显示整段
++            val unit = contentList.getOrNull(index) ?: return
++            val line = LyricsSentence.at(unit, readInUnit)
++            window.updateSentence(index, line.prev, line.current, line.next)
++            window.updateCharProgress(line.progress)
++            return
++        }
++        val current = contentList.getOrNull(index)
++        if (current != null && current.length > TRADITIONAL_MAX_LINE) {
++            // 兜底: 传统模式的项本应是一句话。若出现超长文本(切模式瞬间残留段落块、
++            // 或通篇无标点的长段), 同样按句裁剪, 避免把整段塞进悬浮窗。
++            val line = LyricsSentence.at(current, readInUnit)
++            window.updateSentence(index, line.prev, line.current, line.next)
++            window.updateCharProgress(line.progress)
++            if (force) AppLog.put("Lyrics 超长句已裁剪 index=$index len=${current.length}")
++            return
++        }
 +        if (force || index != lyricsSentenceIndex) {
 +            lyricsSentenceIndex = index
 +            window.updateSentence(
@@ -520,8 +548,7 @@ index 25b279e..0c99b29 100644
 +                contentList.getOrNull(index + 1)
 +            )
 +        }
-+        // readAloudNumber 在朗读当前句期间保持不变, 因此差值即句内已读字符数
-+        window.updateCharProgress(readAloudChapterStart - readAloudNumber)
++        window.updateCharProgress(readInUnit)
 +    }
 +
 +    private fun releaseLyricsWindow() {
@@ -531,6 +558,141 @@ index 25b279e..0c99b29 100644
      }
  
      private fun prevP() {
+diff --git a/app/src/main/java/io/legado/app/service/LyricsSentence.kt b/app/src/main/java/io/legado/app/service/LyricsSentence.kt
+new file mode 100644
+index 0000000..3cb7664
+--- /dev/null
++++ b/app/src/main/java/io/legado/app/service/LyricsSentence.kt
+@@ -0,0 +1,129 @@
++package io.legado.app.service
++
++/**
++ * 段落朗读模式下的歌词行切分。
++ *
++ * 传统模式 contentList 的每一项就是一句话，可直接丢给歌词窗；
++ * 段落模式下 contentList 的每一项是「朗读块」—— TTS 引擎可达数千字符，HTTP 引擎直接是整段。
++ * 直接显示会把悬浮窗撑爆，因此这里按句末标点再切一层，并用块内进度定位当前句。
++ */
++internal object LyricsSentence {
++
++    /** 单行上限：超过此长度（通常是通篇无标点的长段）改为围绕进度开窗 */
++    private const val MAX_LINE = 160
++
++    /** 开窗时进度点左右保留的字符数 */
++    private const val WINDOW_RADIUS = 64
++
++    /** 上下句展示上限 */
++    private const val CONTEXT_LIMIT = 60
++
++    private const val END_MARKS = "。！？!?；;…"
++    private const val CLOSERS = "”’」』）)】》"
++
++    data class Line(
++        /** 上一句（已裁剪，可能为 null） */
++        val prev: String?,
++        /** 当前句 */
++        val current: String,
++        /** 下一句（已裁剪，可能为 null） */
++        val next: String?,
++        /** 当前句内已读字符数 */
++        val progress: Int,
++    )
++
++    /**
++     * @param text   朗读块原文
++     * @param cursor 块内已读字符数（readAloudChapterStart - readAloudNumber）
++     */
++    fun at(text: String, cursor: Int): Line {
++        if (text.isEmpty()) return Line(null, "", null, 0)
++        val pos = cursor.coerceIn(0, text.length)
++        val spans = split(text)
++        if (spans.isEmpty()) {
++            val (body, inner) = window(text, 0, text.length, pos)
++            return Line(null, body, null, inner)
++        }
++        var index = spans.indexOfLast { it.start <= pos }
++        if (index < 0) index = 0
++        val span = spans[index]
++        val (body, inner) = window(text, span.start, span.end, pos)
++        val prev = spans.getOrNull(index - 1)
++            ?.let { clipTail(text.substring(it.start, it.end)) }
++        val next = spans.getOrNull(index + 1)
++            ?.let { clipHead(text.substring(it.start, it.end)) }
++        return Line(prev, body, next, inner)
++    }
++
++    // ------------------------------------------------------------------ 内部
++
++    private data class Span(val start: Int, val end: Int)
++
++    /** 按句末标点切分；标点后的引号、右括号归入前一句 */
++    private fun split(text: String): List<Span> {
++        val spans = ArrayList<Span>()
++        var start = firstVisible(text, 0)
++        var i = start
++        while (i < text.length) {
++            val ch = text[i]
++            if (ch in END_MARKS) {
++                var end = i + 1
++                while (end < text.length && (text[end] in END_MARKS || text[end] in CLOSERS)) end++
++                if (text.substring(start, end).isNotBlank()) spans += Span(start, end)
++                start = firstVisible(text, end)
++                i = start
++                continue
++            }
++            if (ch == '\n') {
++                if (text.substring(start, i).isNotBlank()) spans += Span(start, i)
++                start = firstVisible(text, i)
++                i = start
++                continue
++            }
++            i++
++        }
++        if (start < text.length && text.substring(start).isNotBlank()) {
++            spans += Span(start, text.length)
++        }
++        return spans
++    }
++
++    private fun firstVisible(text: String, from: Int): Int {
++        var i = from
++        while (i < text.length && text[i].isWhitespace()) i++
++        return i
++    }
++
++    /**
++     * 取出 [spanStart, spanEnd) 的可见文本；超长时围绕 pos 开窗。
++     * 返回 (展示文本, 该文本内的已读字符数)
++     */
++    private fun window(text: String, spanStart: Int, spanEnd: Int, pos: Int): Pair<String, Int> {
++        val raw = text.substring(spanStart, spanEnd)
++        val leading = raw.length - raw.trimStart().length
++        val body = raw.trim()
++        var inner = (pos - spanStart - leading).coerceIn(0, body.length)
++        if (body.length <= MAX_LINE) return body to inner
++
++        var from = (inner - WINDOW_RADIUS).coerceAtLeast(0)
++        var to = (from + MAX_LINE).coerceAtMost(body.length)
++        from = (to - MAX_LINE).coerceAtLeast(0)
++        val prefix = if (from > 0) "…" else ""
++        val suffix = if (to < body.length) "…" else ""
++        val shown = prefix + body.substring(from, to) + suffix
++        inner = inner - from + prefix.length
++        return shown to inner.coerceIn(0, shown.length)
++    }
++
++    private fun clipHead(text: String): String {
++        val body = text.trim()
++        return if (body.length <= CONTEXT_LIMIT) body
++        else body.take(CONTEXT_LIMIT) + "…"
++    }
++
++    private fun clipTail(text: String): String {
++        val body = text.trim()
++        return if (body.length <= CONTEXT_LIMIT) body
++        else "…" + body.takeLast(CONTEXT_LIMIT)
++    }
++}
 diff --git a/app/src/main/java/io/legado/app/service/ReadAloudLyricsWindow.kt b/app/src/main/java/io/legado/app/service/ReadAloudLyricsWindow.kt
 new file mode 100644
 index 0000000..bdea9c2
@@ -1219,7 +1381,7 @@ index 0000000..bdea9c2
 +        Color.argb(255, Color.red(color), Color.green(color), Color.blue(color))
 +}
 diff --git a/app/src/main/java/io/legado/app/ui/book/read/config/ReadAloudConfigDialog.kt b/app/src/main/java/io/legado/app/ui/book/read/config/ReadAloudConfigDialog.kt
-index b9f3c03..52e5d8a 100644
+index 3910186..9ef754b 100644
 --- a/app/src/main/java/io/legado/app/ui/book/read/config/ReadAloudConfigDialog.kt
 +++ b/app/src/main/java/io/legado/app/ui/book/read/config/ReadAloudConfigDialog.kt
 @@ -1,7 +1,10 @@
@@ -1249,7 +1411,7 @@ index b9f3c03..52e5d8a 100644
              }
              return super.onPreferenceTreeClick(preference)
          }
-@@ -112,6 +117,31 @@ class ReadAloudConfigDialog : BasePrefDialogFragment() {
+@@ -114,6 +119,31 @@ class ReadAloudConfigDialog : BasePrefDialogFragment() {
                          it.isEnabled = AppConfig.ignoreAudioFocus
                      }
                  }
@@ -1494,10 +1656,10 @@ index 0000000..922ba13
 +    </LinearLayout>
 +</LinearLayout>
 diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
-index 48d5b07..5ddf657 100644
+index 999ad73..7fa2687 100644
 --- a/app/src/main/res/values-zh/strings.xml
 +++ b/app/src/main/res/values-zh/strings.xml
-@@ -2,6 +2,7 @@
+@@ -9,6 +9,7 @@
      <!--App-->
      <string name="app_name">阅读</string>
      <string name="app_name_a">阅读·A</string>
@@ -1505,7 +1667,7 @@ index 48d5b07..5ddf657 100644
      <string name="receiving_shared_label">阅读·搜索</string>
      <string name="receiving_shared_import_label">阅读·导入</string>
      <string name="tip_perm_request_storage">阅读需要访问存储卡权限，请前往“设置”—“应用权限”，打开所需权限</string>
-@@ -1377,6 +1378,34 @@
+@@ -1391,6 +1392,34 @@
      <string name="web_service_wake_lock_summary">开启web服务的时候启用唤醒锁,有些手机开启唤醒锁会被杀后台</string>
      <string name="read_aloud_wake_lock">朗读服务唤醒锁</string>
      <string name="read_aloud_wake_lock_summary">开启朗读的时候启用唤醒锁,有些手机开启唤醒锁会被杀后台</string>
@@ -1567,10 +1729,10 @@ index 9c441dc..4b6b252 100644
      <string name="http_ip" translatable="false">http://%1$s:%2$d</string>
      <string name="git_hub" translatable="false">GitHub</string>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index c467296..e7e1716 100644
+index 1bd4ed0..91b8397 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
-@@ -3,6 +3,7 @@
+@@ -10,6 +10,7 @@
      <!--App-->
      <string name="app_name">Legado</string>
      <string name="app_name_a">Legado·A</string>
@@ -1578,7 +1740,7 @@ index c467296..e7e1716 100644
      <string name="app_name_s" translatable="false">LegadoPlus</string>
      <string name="receiving_shared_label">Legado·search</string>
      <string name="receiving_shared_import_label">Legado·import</string>
-@@ -1382,6 +1383,34 @@
+@@ -1396,6 +1397,34 @@
      <string name="web_service_wake_lock_summary">The wake-up lock is enabled when the web service is enabled, and some phones will be killed when the wake-up lock is enabled.</string>
      <string name="read_aloud_wake_lock">Read aloud service wake-up lock</string>
      <string name="read_aloud_wake_lock_summary">The wake-up lock is enabled when reading aloud is enabled, and the wake-up lock on some mobile phones will be killed in the background.</string>
@@ -1718,6 +1880,193 @@ index 0000000..589e5b9
 +        app:iconSpaceReserved="false" />
 +
 +</androidx.preference.PreferenceScreen>
+diff --git a/app/src/test/java/io/legado/app/service/LyricsSentenceTest.kt b/app/src/test/java/io/legado/app/service/LyricsSentenceTest.kt
+new file mode 100644
+index 0000000..5c38591
+--- /dev/null
++++ b/app/src/test/java/io/legado/app/service/LyricsSentenceTest.kt
+@@ -0,0 +1,76 @@
++package io.legado.app.service
++
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++class LyricsSentenceTest {
++
++    @Test
++    fun singleSentenceIsItsOwnLine() {
++        val line = LyricsSentence.at("他合上书，抬头看了一眼旧钟。", 4)
++        assertEquals("他合上书，抬头看了一眼旧钟。", line.current)
++        assertEquals(4, line.progress)
++        assertNull(line.prev)
++        assertNull(line.next)
++    }
++
++    @Test
++    fun cursorSelectsMatchingSentence() {
++        val text = "第一句。第二句！第三句？"
++        val first = LyricsSentence.at(text, 1)
++        assertEquals("第一句。", first.current)
++        assertEquals("第二句！", first.next)
++        assertNull(first.prev)
++
++        val second = LyricsSentence.at(text, 5)
++        assertEquals("第二句！", second.current)
++        assertEquals("第一句。", second.prev)
++        assertEquals("第三句？", second.next)
++        // 进度是句内偏移, 不是整段偏移
++        assertEquals(1, second.progress)
++
++        val third = LyricsSentence.at(text, 9)
++        assertEquals("第三句？", third.current)
++        // 第三句从下标 8 开始, 游标 9 落在句内第 1 个字符
++        assertEquals(1, third.progress)
++    }
++
++    @Test
++    fun trailingClosersStayWithSentence() {
++        val line = LyricsSentence.at("他说：“走吧。”然后又坐下了。", 4)
++        assertEquals("他说：“走吧。”", line.current)
++    }
++
++    @Test
++    fun newlineBreaksLine() {
++        val line = LyricsSentence.at("上半行\n下半行", 5)
++        assertEquals("上半行", line.prev)
++        assertEquals("下半行", line.current)
++    }
++
++    @Test
++    fun longRunWithoutPunctuationIsWindowedAroundCursor() {
++        val text = "甲".repeat(500)
++        val line = LyricsSentence.at(text, 250)
++        assertTrue("超长句应被裁剪, 实际 ${line.current.length}", line.current.length <= 162)
++        assertTrue("应带省略号", line.current.startsWith("…") && line.current.endsWith("…"))
++        // 进度落在展示文本内
++        assertTrue(line.progress in 1 until line.current.length)
++    }
++
++    @Test
++    fun cursorBeyondEndIsClamped() {
++        val line = LyricsSentence.at("只有一句。", 999)
++        assertEquals("只有一句。", line.current)
++        assertEquals("只有一句。".length, line.progress)
++    }
++
++    @Test
++    fun blankTextYieldsEmptyLine() {
++        val line = LyricsSentence.at("", 0)
++        assertEquals("", line.current)
++        assertEquals(0, line.progress)
++    }
++}
+diff --git a/modules/web/public/js_source_template.js b/modules/web/public/js_source_template.js
+new file mode 100644
+index 0000000..25ae767
+--- /dev/null
++++ b/modules/web/public/js_source_template.js
+@@ -0,0 +1,99 @@
++/**
++ * JavaScript 单文件书源模板。
++ * search、getChapters、getContent 为必需函数，getBookInfo 和 explore 为可选函数。
++ * getReviewSummary 与 getReviewDetail 成对声明即可启用段评，getReviewReplies 可选用于回复分页。
++ * loginUi 与 loginAction 成对声明即可启用动态登录界面。
++ * config 保存脚本配置；source 是运行时书源实体，sourceApi 是兼容旧脚本的别名。
++ * 可使用 java、source、sourceApi、cookie、cache、baseUrl 等现有书源脚本绑定。
++ */
++
++var config = {
++    bookSourceUrl: "https://example.com",
++    bookSourceName: "示例 JS 书源",
++    bookSourceType: 0,
++    bookSourceGroup: "",
++    bookSourceComment: "",
++    // 旧版表单登录示例: [{ name: "账号", type: "text" }, { name: "密码", type: "password" }]
++    loginUi: [],
++    // 发现分类支持 JSON 数组，或“名称::url”文本（换行或 && 分隔）。
++    exploreUrl: [],
++    lastUpdateTime: 0
++};
++
++var Jsoup = org.jsoup.Jsoup;
++
++// config.loginUi 非空时必须提供。
++function login() {
++    var loginInfo = JSON.parse(source.getLoginInfo() || "{}");
++    // 执行登录请求；失败时 throw "错误信息"。
++}
++
++/**
++ * 动态登录界面（可选）由 loginUi(state) 与 loginAction(action, state, form) 成对启用，
++ * 不要同时填写 config.loginUi。支持 text、password、label、select 和 button 行；
++ * loginAction 可返回 state、error、login、close 命令，完整示例见 JS 帮助。
++ */
++
++function search(key, page) {
++    var html = java.ajax(config.bookSourceUrl + "/search?q=" + encodeURIComponent(key) + "&p=" + page);
++    var books = [];
++    // books.push({ name: "书名", bookUrl: "https://example.com/book/1", author: "作者" });
++    return books;
++}
++
++// config.exploreUrl 非空时必须提供。url 原样传入，不会替换 {{page}}，翻页请使用 page。
++function explore(url, page) {
++    var html = java.ajax(url);
++    return [];
++}
++
++// 可选。返回字段会合并到搜索结果，tocUrl 为空时默认使用 bookUrl。
++function getBookInfo(book) {
++    var html = java.ajax(book.bookUrl);
++    return {
++        intro: "",
++        coverUrl: "",
++        latestChapterTitle: "",
++        tocUrl: book.bookUrl
++    };
++}
++
++// title 和 url 为必填字段，数组顺序即目录顺序。
++function getChapters(book) {
++    var html = java.ajax(book.tocUrl);
++    var chapters = [];
++    // chapters.push({ title: "第 1 章", url: "https://example.com/read/1" });
++    return chapters;
++}
++
++// 返回正文文本，空字符串视为失败。
++function getContent(chapter, book, nextChapterUrl) {
++    var html = java.ajax(chapter.url);
++    return html;
++}
++
++/*
++ * 段评统计与详情函数为可选功能。启用时请同时取消下面两个函数的注释。
++ * getReviewSummary 返回 [{ paraIndex: 1, count: 5, paraData: "token" }]，paraIndex 为 -1 时表示章节标题；
++ * getReviewDetail 返回 { items: [{ id: "comment-1", content: { text: "评论内容", replyCount: 3 } }], nextPageUrl: null }。
++ * 可选的 getReviewReplies 返回 { items: [{ id: "reply-1", content: "回复内容" }] }，用于按评论 ID 和 page 加载更多回复。
++ * id/reviewId 是不透明字符串；超过 JavaScript 安全整数范围的 ID 必须在 JSON.parse 前保留为字符串。
++ * content 也可返回 { text, replyToName, img, audio, time, likeCount, replyCount }。
++ * nextPageUrl 只是“是否还有下一页”的信号，翻页时应用会递增 page 参数再次调用。
++ *
++function getReviewSummary(chapter, book) {
++    var html = java.ajax(config.bookSourceUrl + "/review/summary?url=" + chapter.url);
++    return [];
++}
++
++function getReviewDetail(chapter, book, paraIndex, paraData, page) {
++    var html = java.ajax(config.bookSourceUrl + "/review/detail?para=" + paraIndex + "&page=" + page);
++    return { items: [], nextPageUrl: null };
++}
++
++// 可选。主评论需要提供非空 id 和 replyCount，且不要内嵌 replies；page=1 返回首批，空 items 表示结束。
++function getReviewReplies(chapter, book, paraIndex, paraData, reviewId, page) {
++    var html = java.ajax(config.bookSourceUrl + "/review/replies?id=" + reviewId + "&page=" + page);
++    return { items: [] };
++}
++*/
 diff --git a/modules/web/src/assets/oled.css b/modules/web/src/assets/oled.css
 new file mode 100644
 index 0000000..3569a64
