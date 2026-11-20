@@ -1,12 +1,12 @@
 {
-  "versionCode": 38204,
-  "versionName": "3.26101921-r6",
+  "versionCode": 38600,
+  "versionName": "3.26112051-r7",
   "url": "https://github.com/byl669/legado-lyrics-overlay/releases/latest/download/Legado-lyrics-overlay-latest.apk",
-  "backupUrl": "https://github.com/byl669/legado-lyrics-overlay/releases/download/r6/Legado-lyrics-overlay-latest.apk",
+  "backupUrl": "https://github.com/byl669/legado-lyrics-overlay/releases/download/r7/Legado-lyrics-overlay-latest.apk",
   "mirrorUrl": "https://ghfast.top/https://github.com/byl669/legado-lyrics-overlay/releases/latest/download/Legado-lyrics-overlay-latest.apk",
   "alternateMirrorUrl": "https://gh-proxy.com/https://github.com/byl669/legado-lyrics-overlay/releases/latest/download/Legado-lyrics-overlay-latest.apk",
-  "size": 28673490,
-  "sha256": "682eb9e1e232f77b0b051e9a69c23c09c7a5ad750524417960f088a2157851bc",
-  "notes": "## r6 · 网页端 OLED 纯黑主题 + 应用内更新\n\n适用于自建签名的共存版（`com.legado.app.custom`），可直接覆盖安装 r4/r5，数据不丢。\n\n### 新增\n- **网页端「OLED 纯黑」主题**：正文与页面纯黑 `#000000`，浮层 `#0A0A0A` 保留 1px 边界\n- **网页端「文字颜色」**：自动 / 纯白 / 米白 / 暖灰 / 浅灰 / 奶咖 / 淡青，按黑底可读性挑选\n- **应用内更新**：检查更新改读本仓库 `updates.json`（raw → jsDelivr → fastly 多镜像），\n  按 `versionCode` 比较，弹窗内直接下载升级\n\n### 修复\n- 网页端夜间正文写死 `#666`（白天在窗边看不清）→ 提亮为 `#E8E2D6`\n- 网页端书架书名/作者写死浅色，黑底上几乎不可见 → 跟随主题\n- 网页端目录弹窗把主题序号当布尔用，任何主题都被判定为夜间\n- 定制版误查上游 Release（包名与签名都不同，装了等于换 App）→ 已切断\n\n### 参数\n- versionCode `38204` / versionName `3.26101921-r6`\n- minSdk 26 · targetSdk 36",
-  "pubDate": "2026-10-19T22:17:21+08:00"
+  "size": 27444225,
+  "sha256": "a4d4e50e4fb924af89cf1ceb65e8c821854bbcaf36ef51d6973df2c8d9061023",
+  "notes": "## r7 · 跟上下游 3.26110117（段落阅读模式）\n\n适用于自建签名的共存版（`com.legado.app.custom`），直接覆盖安装 r6 即可，数据自动迁移。\n\n底座从上游 `5198645`（10-04）跳到 `330e606c`（11-01 构建），**76 个提交 / 229 个文件**。\n\n### 上游新功能（这一版全吃进来了）\n- **段落阅读模式**：整段显示、整段朗读，不再分页切断（设置里可选，默认关闭）\n- 朗读完整段落 + 选区从此处朗读\n- WebDAV 备份自动清理（可设保留份数）、本地导入书籍自动上传 WebDAV\n- 内容搜索支持方向与记忆范围；阅读记录元数据可编辑\n- 正文最大字号提到 100\n- 一批修复：WebView 串页、大 jsLib 编辑器黑屏、输入法顶起底栏、TXT 同 ID 目录规则、高亮胶囊排版\n\n### 歌词窗口适配（本次核心）\n- **段落模式按句切分**：上游段落模式下朗读单位是整段（TTS 可达数千字），\n  悬浮窗改为按句末标点二次切分，始终只显示一句\n- **超长无标点段落**：围绕当前朗读位置开窗，两端加省略号\n- **传统模式兜底**：>120 字的项同样裁剪（切模式瞬间会残留段落块，实测 340 字）\n- **修 Bug**：段落模式原来不经过传统 prepare，导致从不创建歌词窗（有声音没歌词）\n\n### 参数\n- versionCode `38600` / versionName `3.26112051-r7`\n- minSdk 26 · targetSdk 36 · 数据库 schema 111 → 113（首次启动自动迁移）",
+  "pubDate": "2026-11-20T15:06:17+08:00"
 }
